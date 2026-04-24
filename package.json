@@ -1,0 +1,16 @@
+{
+  "name": "flowagent",
+  "version": "0.1.0",
+  "description": "Autonomous AI agent task orchestration system",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:app\"",
+    "dev:server": "cd server && npm run dev",
+    "dev:app": "cd app && npm run dev",
+    "install:all": "npm install && cd server && npm install && cd ../app && npm install",
+    "build": "cd app && npm run build"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
