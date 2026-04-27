@@ -9,7 +9,7 @@ export default function NewTaskModal() {
   const { agents, createTask, setShowNewTask } = useStore();
   const [form, setForm] = useState({
     title: '', description: '', priority: 'medium', complexity: 'medium',
-    assigned_agent_id: '', tags: '',
+    assigned_agent_id: 'agent_pm', tags: '', acceptance_criteria: '',
   });
   const [saving, setSaving] = useState(false);
 
@@ -22,6 +22,7 @@ export default function NewTaskModal() {
     try {
       await createTask({
         ...form,
+        acceptance_criteria: form.acceptance_criteria.trim() || undefined,
         tags: form.tags ? form.tags.split(',').map(t => t.trim()).filter(Boolean) : [],
         assigned_agent_id: form.assigned_agent_id || undefined,
         column_id: 'col_backlog',
@@ -62,6 +63,18 @@ export default function NewTaskModal() {
               value={form.description}
               onChange={e => set('description', e.target.value)}
               placeholder="Add more context for the agent..."
+              rows={3}
+              className="w-full bg-surface-3 border border-border rounded-lg px-3 py-2 text-sm text-gray-100
+                         placeholder-gray-600 focus:outline-none focus:border-accent transition-colors resize-none"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-400 mb-1.5">Acceptance Criteria <span className="text-gray-600">(optional)</span></label>
+            <textarea
+              value={form.acceptance_criteria}
+              onChange={e => set('acceptance_criteria', e.target.value)}
+              placeholder="What does done look like? List concrete, testable conditions..."
               rows={3}
               className="w-full bg-surface-3 border border-border rounded-lg px-3 py-2 text-sm text-gray-100
                          placeholder-gray-600 focus:outline-none focus:border-accent transition-colors resize-none"

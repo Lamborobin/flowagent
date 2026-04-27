@@ -1,10 +1,10 @@
-require('dotenv').config();
+require('dotenv').config({ override: true });
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
 const { initDb } = require('./db');
 const tasksRouter = require('./routes/tasks');
-const { agentsRouter, columnsRouter, secretsRouter } = require('./routes/other');
+const { agentsRouter, columnsRouter, secretsRouter, instructionsRouter, agentTemplatesRouter } = require('./routes/other');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -19,6 +19,8 @@ app.use('/api/tasks', tasksRouter);
 app.use('/api/agents', agentsRouter);
 app.use('/api/columns', columnsRouter);
 app.use('/api/secrets', secretsRouter);
+app.use('/api/instructions', instructionsRouter);
+app.use('/api/agent-templates', agentTemplatesRouter);
 
 // Health check
 app.get('/api/health', (req, res) => {

@@ -2,17 +2,35 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const { getDb } = require('../db');
 const { requirePermission, attachAgent } = require('../middleware/auth');
+const { triggerPmAgent } = require('../services/agentRunner');
 
 const router = express.Router();
 
-// GET /tasks — list all tasks (optionally filter by column)
+// Column-based assignment restrictions
+const COLUMN_ASSIGNMENT_RULES = {
+  'col_backlog': ['agent_pm', 'human'],
+  'col_inprogress': ['agent_dev', 'human'],
+  'col_testing': ['agent_test', 'human'],
+  'col_humanaction': ['human'],
+  'col_humanreview': ['human'],
+  'col_done': ['human']
+};
+
+// Helper: task is locked when it has a PM planning process underway and not yet fully approved
+function isTaskLocked(task) {
+  return task.pm_approval_status != null &&
+    !(task.pm_approval_status === 'approved' && task.human_approval_status === 'approved');
+}
+
+// GET /tasks — list all tasks (optionally filter by column), excludes archived
 router.get('/', attachAgent, (req, res) => {
   const db = getDb();
-  const { column_id, assigned_agent_id } = req.query;
+  const { column_id, assigned_agent_id, include_archived } = req.query;
 
   let query = 'SELECT * FROM tasks WHERE 1=1';
   const params = [];
 
+  if (!include_archived) { query += ' AND archived_at IS NULL'; }
   if (column_id) { query += ' AND column_id = ?'; params.push(column_id); }
   if (assigned_agent_id) { query += ' AND assigned_agent_id = ?'; params.push(assigned_agent_id); }
 
@@ -23,6 +41,7 @@ router.get('/', attachAgent, (req, res) => {
     ...t,
     tags: JSON.parse(t.tags || '[]'),
     metadata: JSON.parse(t.metadata || '{}'),
+    is_locked: isTaskLocked(t),
   })));
 });
 
@@ -44,6 +63,7 @@ router.get('/:id', attachAgent, (req, res) => {
     ...task,
     tags: JSON.parse(task.tags || '[]'),
     metadata: JSON.parse(task.metadata || '{}'),
+    is_locked: isTaskLocked(task),
     logs
   });
 });
@@ -52,7 +72,7 @@ router.get('/:id', attachAgent, (req, res) => {
 router.post('/', requirePermission('task:create'), (req, res) => {
   const db = getDb();
   const {
-    title, description, column_id = 'col_backlog',
+    title, description, acceptance_criteria, column_id = 'col_backlog',
     assigned_agent_id, priority = 'medium', complexity = 'medium',
     tags = [], metadata = {}
   } = req.body;
@@ -65,20 +85,38 @@ router.post('/', requirePermission('task:create'), (req, res) => {
 
   const id = 'task_' + uuidv4().replace(/-/g, '').slice(0, 12);
 
+  // If PM is assigned at creation time in Backlog, auto-request PM review
+  let pmReviewStatus = null;
+  if (assigned_agent_id === 'agent_pm' && column_id === 'col_backlog') {
+    pmReviewStatus = 'pending';
+  }
+
   db.prepare(`
-    INSERT INTO tasks (id, title, description, column_id, assigned_agent_id, priority, complexity, tags, metadata)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, title, description, column_id, assigned_agent_id || null, priority, complexity,
-    JSON.stringify(tags), JSON.stringify(metadata));
+    INSERT INTO tasks (id, title, description, acceptance_criteria, column_id, assigned_agent_id, priority, complexity, tags, metadata, pm_approval_status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, title, description, acceptance_criteria || null, column_id, assigned_agent_id || null, priority, complexity,
+    JSON.stringify(tags), JSON.stringify(metadata), pmReviewStatus);
 
   // Log it
+  const agentId = req.agent && db.prepare('SELECT id FROM agents WHERE id = ?').get(req.agent.id) ? req.agent.id : null;
   db.prepare(`
     INSERT INTO task_logs (id, task_id, agent_id, action, to_column, message)
     VALUES (?, ?, ?, ?, ?, ?)
-  `).run(uuidv4(), id, req.agent?.id || null, 'created', column_id, `Task created by ${req.agent?.name || req.agent?.role || 'unknown'}`);
+  `).run(uuidv4(), id, agentId, 'created', column_id, `Task created by ${req.agent?.name || req.agent?.role || 'unknown'}`);
+
+  // Log PM review request if auto-triggered
+  if (pmReviewStatus === 'pending') {
+    db.prepare(`
+      INSERT INTO task_logs (id, task_id, agent_id, action, message)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(uuidv4(), id, agentId, 'pm_review_requested', 'PM review automatically requested on task creation');
+  }
 
   const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
-  res.status(201).json({ ...task, tags: JSON.parse(task.tags), metadata: JSON.parse(task.metadata) });
+  res.status(201).json({ ...task, tags: JSON.parse(task.tags), metadata: JSON.parse(task.metadata), is_locked: isTaskLocked(task) });
+
+  // Trigger PM agent asynchronously after response is sent
+  if (pmReviewStatus === 'pending') triggerPmAgent(id);
 });
 
 // PATCH /tasks/:id — update task fields
@@ -87,15 +125,42 @@ router.patch('/:id', requirePermission('task:update'), (req, res) => {
   const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
   if (!task) return res.status(404).json({ error: 'Task not found' });
 
+  // Validate assignment restrictions
+  if (req.body.assigned_agent_id !== undefined) {
+    const allowedAgents = COLUMN_ASSIGNMENT_RULES[task.column_id] || [];
+    if (!allowedAgents.includes(req.body.assigned_agent_id)) {
+      return res.status(403).json({
+        error: `Agent ${req.body.assigned_agent_id} cannot be assigned to column ${task.column_id}`,
+        allowed_agents: allowedAgents
+      });
+    }
+  }
+
   const agent = req.agent;
   const permissions = agent.permissions;
+  const hasFullUpdate = permissions.includes('task:update') || permissions.includes('*');
+  const hasStatusUpdate = permissions.includes('task:update:status') || permissions.includes('*');
+  const hasProgressUpdate = permissions.includes('task:update:progress') || permissions.includes('task:update') || permissions.includes('*');
+
+  // Content fields are locked while task is in PM planning phase
+  const locked = isTaskLocked(task);
+  const CONTENT_FIELDS = ['title', 'description', 'acceptance_criteria', 'priority', 'complexity', 'tags', 'metadata', 'assigned_agent_id', 'recommended_model'];
+  const tryingContentEdit = CONTENT_FIELDS.some(f => req.body[f] !== undefined);
+  if (locked && tryingContentEdit && !permissions.includes('*')) {
+    return res.status(409).json({
+      error: 'Task is locked in planning phase. Content cannot be edited until PM and human have approved.',
+      is_locked: true,
+    });
+  }
+
   const allowed = {};
 
-  // PM/human can update everything
-  if (permissions.includes('task:update') && !permissions.includes('task:update:status')) {
-    const { title, description, priority, complexity, tags, metadata, assigned_agent_id, recommended_model } = req.body;
+  // PM/human can update everything (when not locked, or when human overrides)
+  if (hasFullUpdate) {
+    const { title, description, acceptance_criteria, priority, complexity, tags, metadata, assigned_agent_id, recommended_model } = req.body;
     if (title !== undefined) allowed.title = title;
     if (description !== undefined) allowed.description = description;
+    if (acceptance_criteria !== undefined) allowed.acceptance_criteria = acceptance_criteria;
     if (priority !== undefined) allowed.priority = priority;
     if (complexity !== undefined) allowed.complexity = complexity;
     if (tags !== undefined) allowed.tags = JSON.stringify(tags);
@@ -104,9 +169,9 @@ router.patch('/:id', requirePermission('task:update'), (req, res) => {
     if (recommended_model !== undefined) allowed.recommended_model = recommended_model;
   }
 
-  // All agents with update:status
+  // All agents with update:status or progress
   const { progress } = req.body;
-  if (progress !== undefined && (permissions.includes('task:update:progress') || permissions.includes('task:update'))) {
+  if (progress !== undefined && hasProgressUpdate) {
     allowed.progress = Math.min(100, Math.max(0, parseInt(progress)));
   }
 
@@ -117,11 +182,32 @@ router.patch('/:id', requirePermission('task:update'), (req, res) => {
   const setClauses = Object.keys(allowed).map(k => `${k} = ?`).join(', ');
   db.prepare(`UPDATE tasks SET ${setClauses} WHERE id = ?`).run(...Object.values(allowed), task.id);
 
+  const agentId = agent && db.prepare('SELECT id FROM agents WHERE id = ?').get(agent.id) ? agent.id : null;
   db.prepare(`INSERT INTO task_logs (id, task_id, agent_id, action, message) VALUES (?, ?, ?, ?, ?)`)
-    .run(uuidv4(), task.id, agent.id, 'updated', `Fields updated: ${Object.keys(allowed).join(', ')}`);
+    .run(uuidv4(), task.id, agentId, 'updated', `Fields updated: ${Object.keys(allowed).join(', ')}`);
+
+  let triggerPm = false;
+
+  // Auto-request PM review if PM assigned in Backlog
+  if (req.body.assigned_agent_id === 'agent_pm' && task.column_id === 'col_backlog') {
+    if (!task.pm_approval_status) {
+      db.prepare(`UPDATE tasks SET pm_approval_status = 'pending' WHERE id = ?`).run(task.id);
+      db.prepare(`INSERT INTO task_logs (id, task_id, agent_id, action, message) VALUES (?, ?, ?, ?, ?)`)
+        .run(uuidv4(), task.id, agentId, 'pm_review_requested', 'PM review automatically requested on assignment');
+      triggerPm = true;
+    }
+  }
+
+  // Notify Developer if assigned in In Progress
+  if (req.body.assigned_agent_id === 'agent_dev' && task.column_id === 'col_inprogress') {
+    db.prepare(`INSERT INTO task_logs (id, task_id, agent_id, action, message) VALUES (?, ?, ?, ?, ?)`)
+      .run(uuidv4(), task.id, agentId, 'developer_assigned', 'Developer assigned - ready to start work');
+  }
 
   const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id);
-  res.json({ ...updated, tags: JSON.parse(updated.tags), metadata: JSON.parse(updated.metadata) });
+  res.json({ ...updated, tags: JSON.parse(updated.tags), metadata: JSON.parse(updated.metadata), is_locked: isTaskLocked(updated) });
+
+  if (triggerPm) triggerPmAgent(task.id);
 });
 
 // POST /tasks/:id/move — move task to a different column
@@ -136,14 +222,25 @@ router.post('/:id/move', requirePermission('task:move'), (req, res) => {
   const col = db.prepare('SELECT id FROM columns WHERE id = ?').get(column_id);
   if (!col) return res.status(400).json({ error: 'Invalid column_id' });
 
+  // Locked tasks cannot move anywhere until PM + human both approve
+  if (isTaskLocked(task)) {
+    return res.status(409).json({
+      error: 'Task is locked in planning phase. Complete PM review and human sign-off before moving.',
+      is_locked: true,
+      pm_approved: task.pm_approval_status === 'approved',
+      human_approved: task.human_approval_status === 'approved',
+    });
+  }
+
   const fromColumn = task.column_id;
   db.prepare('UPDATE tasks SET column_id = ? WHERE id = ?').run(column_id, task.id);
 
+  const agentId = req.agent && db.prepare('SELECT id FROM agents WHERE id = ?').get(req.agent.id) ? req.agent.id : null;
   db.prepare(`INSERT INTO task_logs (id, task_id, agent_id, action, from_column, to_column, message) VALUES (?, ?, ?, ?, ?, ?, ?)`)
-    .run(uuidv4(), task.id, req.agent.id, 'moved', fromColumn, column_id, message || `Moved by ${req.agent.name || req.agent.role}`);
+    .run(uuidv4(), task.id, agentId, 'moved', fromColumn, column_id, message || `Moved by ${req.agent?.name || req.agent?.role || 'unknown'}`);
 
   const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id);
-  res.json({ ...updated, tags: JSON.parse(updated.tags), metadata: JSON.parse(updated.metadata) });
+  res.json({ ...updated, tags: JSON.parse(updated.tags), metadata: JSON.parse(updated.metadata), is_locked: isTaskLocked(updated) });
 });
 
 // POST /tasks/:id/log — add a log entry
@@ -155,8 +252,9 @@ router.post('/:id/log', requirePermission('task:log'), (req, res) => {
   const { action = 'note', message } = req.body;
   if (!message) return res.status(400).json({ error: 'message is required' });
 
+  const agentId = req.agent && db.prepare('SELECT id FROM agents WHERE id = ?').get(req.agent.id) ? req.agent.id : null;
   db.prepare(`INSERT INTO task_logs (id, task_id, agent_id, action, message) VALUES (?, ?, ?, ?, ?)`)
-    .run(uuidv4(), task.id, req.agent.id, action, message);
+    .run(uuidv4(), task.id, agentId, action, message);
 
   res.json({ ok: true });
 });
@@ -173,10 +271,198 @@ router.post('/:id/request_human', requirePermission('task:request_human'), (req,
   db.prepare(`UPDATE tasks SET column_id = 'col_humanaction', requires_human_action = 1, human_action_reason = ? WHERE id = ?`)
     .run(reason || 'Human action required', task.id);
 
+  const agentId = req.agent && db.prepare('SELECT id FROM agents WHERE id = ?').get(req.agent.id) ? req.agent.id : null;
   db.prepare(`INSERT INTO task_logs (id, task_id, agent_id, action, from_column, to_column, message) VALUES (?, ?, ?, ?, ?, ?, ?)`)
-    .run(uuidv4(), task.id, req.agent.id, 'human_action_requested', fromColumn, 'col_humanaction', reason || 'Human action required');
+    .run(uuidv4(), task.id, agentId, 'human_action_requested', fromColumn, 'col_humanaction', reason || 'Human action required');
 
   res.json({ ok: true, message: 'Task flagged for human action' });
+});
+
+// POST /tasks/:id/pm_question — PM posts a clarifying question
+router.post('/:id/pm_question', requirePermission('task:update'), (req, res) => {
+  const db = getDb();
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+
+  const { question } = req.body;
+  if (!question) return res.status(400).json({ error: 'question is required' });
+
+  db.prepare(`UPDATE tasks SET pm_approval_status = 'questioning', pm_pending_question = ? WHERE id = ?`)
+    .run(question, task.id);
+
+  const agentId = req.agent && db.prepare('SELECT id FROM agents WHERE id = ?').get(req.agent.id) ? req.agent.id : null;
+  db.prepare(`INSERT INTO task_logs (id, task_id, agent_id, action, message) VALUES (?, ?, ?, ?, ?)`)
+    .run(uuidv4(), task.id, agentId, 'pm_question', question);
+
+  const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id);
+  res.json({ ...updated, tags: JSON.parse(updated.tags), metadata: JSON.parse(updated.metadata) });
+});
+
+// POST /tasks/:id/answer — human answers PM's pending question
+router.post('/:id/answer', requirePermission('task:update'), (req, res) => {
+  const db = getDb();
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+
+  if (!task.pm_pending_question) {
+    return res.status(400).json({ error: 'No pending question from PM' });
+  }
+
+  const { answer } = req.body;
+  if (!answer) return res.status(400).json({ error: 'answer is required' });
+
+  // Clear pending question, keep status as 'questioning' (PM will read and decide next)
+  db.prepare(`UPDATE tasks SET pm_pending_question = NULL WHERE id = ?`).run(task.id);
+
+  const agentId = req.agent && db.prepare('SELECT id FROM agents WHERE id = ?').get(req.agent.id) ? req.agent.id : null;
+  db.prepare(`INSERT INTO task_logs (id, task_id, agent_id, action, message) VALUES (?, ?, ?, ?, ?)`)
+    .run(uuidv4(), task.id, agentId, 'human_answer', answer);
+
+  const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id);
+  res.json({ ...updated, tags: JSON.parse(updated.tags), metadata: JSON.parse(updated.metadata) });
+
+  // Re-trigger PM agent to continue conversation
+  triggerPmAgent(task.id);
+});
+
+// POST /tasks/:id/request_pm_review — request PM review (human initiates)
+router.post('/:id/request_pm_review', requirePermission('task:update'), (req, res) => {
+  const db = getDb();
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+
+  if (task.column_id !== 'col_backlog') {
+    return res.status(400).json({ error: 'PM review can only be requested in Backlog' });
+  }
+
+  db.prepare(`UPDATE tasks SET pm_approval_status = 'pending' WHERE id = ?`).run(task.id);
+
+  const agentId = req.agent && db.prepare('SELECT id FROM agents WHERE id = ?').get(req.agent.id) ? req.agent.id : null;
+  db.prepare(`INSERT INTO task_logs (id, task_id, agent_id, action, message) VALUES (?, ?, ?, ?, ?)`)
+    .run(uuidv4(), task.id, agentId, 'pm_review_requested', 'PM review requested');
+
+  const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id);
+  res.json({ ...updated, tags: JSON.parse(updated.tags), metadata: JSON.parse(updated.metadata) });
+});
+
+// POST /tasks/:id/pm_review — PM submits review
+router.post('/:id/pm_review', requirePermission('task:update'), (req, res) => {
+  const db = getDb();
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+
+  const { comment, approved } = req.body;
+  if (approved === undefined) return res.status(400).json({ error: 'approved field is required' });
+
+  const status = approved ? 'approved' : 'rejected';
+  db.prepare(`UPDATE tasks SET pm_approval_status = ?, pm_review_comment = ?, pm_review_date = CURRENT_TIMESTAMP WHERE id = ?`)
+    .run(status, comment || null, task.id);
+
+  const agentId = req.agent && db.prepare('SELECT id FROM agents WHERE id = ?').get(req.agent.id) ? req.agent.id : null;
+  db.prepare(`INSERT INTO task_logs (id, task_id, agent_id, action, message) VALUES (?, ?, ?, ?, ?)`)
+    .run(uuidv4(), task.id, agentId, 'pm_reviewed', `PM review: ${approved ? 'approved' : 'rejected'} - ${comment || ''}`);
+
+  if (agentId) {
+    db.prepare(`INSERT INTO task_approvals (id, task_id, approver_id, approval_type, status, comment) VALUES (?, ?, ?, ?, ?, ?)`)
+      .run(uuidv4(), task.id, agentId, 'pm_review', status, comment || null);
+  }
+
+  const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id);
+  res.json({ ...updated, tags: JSON.parse(updated.tags), metadata: JSON.parse(updated.metadata) });
+});
+
+// POST /tasks/:id/approve — human approves task
+router.post('/:id/approve', requirePermission('task:update'), (req, res) => {
+  const db = getDb();
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+
+  if (!task.pm_approval_status) {
+    return res.status(400).json({ error: 'PM review must be requested before human approval' });
+  }
+
+  if (task.pm_approval_status !== 'approved') {
+    return res.status(400).json({ error: 'PM must approve before human approval' });
+  }
+
+  const { comment } = req.body;
+  db.prepare(`UPDATE tasks SET human_approval_status = 'approved', human_review_comment = ?, human_review_date = CURRENT_TIMESTAMP WHERE id = ?`)
+    .run(comment || null, task.id);
+
+  const agentId = req.agent && db.prepare('SELECT id FROM agents WHERE id = ?').get(req.agent.id) ? req.agent.id : null;
+  db.prepare(`INSERT INTO task_logs (id, task_id, agent_id, action, message) VALUES (?, ?, ?, ?, ?)`)
+    .run(uuidv4(), task.id, agentId, 'human_approved', `Human approval granted - ${comment || ''}`);
+
+  // Only insert to task_approvals if there's a valid agent_id
+  if (agentId) {
+    db.prepare(`INSERT INTO task_approvals (id, task_id, approver_id, approval_type, status, comment) VALUES (?, ?, ?, ?, ?, ?)`)
+      .run(uuidv4(), task.id, agentId, 'human_approval', 'approved', comment || null);
+  }
+
+  const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id);
+  res.json({ ...updated, tags: JSON.parse(updated.tags), metadata: JSON.parse(updated.metadata) });
+});
+
+// POST /tasks/:id/reject — human rejects task
+router.post('/:id/reject', requirePermission('task:update'), (req, res) => {
+  const db = getDb();
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+
+  const { comment } = req.body;
+  if (!comment) return res.status(400).json({ error: 'comment is required for rejection' });
+
+  db.prepare(`UPDATE tasks SET human_approval_status = 'rejected', human_review_comment = ?, human_review_date = CURRENT_TIMESTAMP WHERE id = ?`)
+    .run(comment, task.id);
+
+  const agentId = req.agent && db.prepare('SELECT id FROM agents WHERE id = ?').get(req.agent.id) ? req.agent.id : null;
+  db.prepare(`INSERT INTO task_logs (id, task_id, agent_id, action, message) VALUES (?, ?, ?, ?, ?)`)
+    .run(uuidv4(), task.id, agentId, 'human_rejected', `Human rejection: ${comment}`);
+
+  if (agentId) {
+    db.prepare(`INSERT INTO task_approvals (id, task_id, approver_id, approval_type, status, comment) VALUES (?, ?, ?, ?, ?, ?)`)
+      .run(uuidv4(), task.id, agentId, 'human_approval', 'rejected', comment);
+  }
+
+  const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id);
+  res.json({ ...updated, tags: JSON.parse(updated.tags), metadata: JSON.parse(updated.metadata) });
+});
+
+// POST /tasks/:id/archive — archive a task (human only)
+router.post('/:id/archive', attachAgent, (req, res) => {
+  if (req.agent?.id !== 'human') return res.status(403).json({ error: 'Only humans can archive tasks' });
+  const db = getDb();
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+
+  db.prepare('UPDATE tasks SET archived_at = CURRENT_TIMESTAMP WHERE id = ?').run(task.id);
+  db.prepare(`INSERT INTO task_logs (id, task_id, agent_id, action, message) VALUES (?, ?, ?, ?, ?)`)
+    .run(uuidv4(), task.id, null, 'archived', 'Task archived by human');
+
+  res.json({ ok: true });
+});
+
+// POST /tasks/:id/bypass_pm — human overrides PM lock and unlocks the task
+router.post('/:id/bypass_pm', attachAgent, (req, res) => {
+  if (req.agent?.id !== 'human') return res.status(403).json({ error: 'Only humans can bypass PM checks' });
+  const db = getDb();
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+
+  db.prepare(`
+    UPDATE tasks
+    SET pm_approval_status = 'approved', human_approval_status = 'approved',
+        pm_review_comment = 'Bypassed by human override',
+        pm_review_date = CURRENT_TIMESTAMP, human_review_date = CURRENT_TIMESTAMP,
+        pm_pending_question = NULL
+    WHERE id = ?
+  `).run(task.id);
+
+  db.prepare(`INSERT INTO task_logs (id, task_id, agent_id, action, message) VALUES (?, ?, ?, ?, ?)`)
+    .run(uuidv4(), task.id, null, 'pm_bypassed', 'PM planning checks bypassed by human override');
+
+  const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id);
+  res.json({ ...updated, tags: JSON.parse(updated.tags), metadata: JSON.parse(updated.metadata), is_locked: false });
 });
 
 // DELETE /tasks/:id
