@@ -192,6 +192,10 @@ function initDb() {
     db.exec('ALTER TABLE tasks ADD COLUMN archived_at DATETIME');
     console.log('✅ Migrated: added archived_at to tasks');
   }
+  if (!taskCols.includes('pm_checklist')) {
+    db.exec('ALTER TABLE tasks ADD COLUMN pm_checklist TEXT');
+    console.log('✅ Migrated: added pm_checklist to tasks');
+  }
 
   // Migration: add archived_at and is_protected to columns table
   const colTableCols = db.prepare('PRAGMA table_info(columns)').all().map(c => c.name);

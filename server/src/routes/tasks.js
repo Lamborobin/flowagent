@@ -41,6 +41,7 @@ router.get('/', attachAgent, (req, res) => {
     ...t,
     tags: JSON.parse(t.tags || '[]'),
     metadata: JSON.parse(t.metadata || '{}'),
+    pm_checklist: t.pm_checklist ? JSON.parse(t.pm_checklist) : null,
     is_locked: isTaskLocked(t),
   })));
 });
@@ -63,6 +64,7 @@ router.get('/:id', attachAgent, (req, res) => {
     ...task,
     tags: JSON.parse(task.tags || '[]'),
     metadata: JSON.parse(task.metadata || '{}'),
+    pm_checklist: task.pm_checklist ? JSON.parse(task.pm_checklist) : null,
     is_locked: isTaskLocked(task),
     logs
   });
