@@ -188,8 +188,14 @@ claude --system-prompt instructions/tester.md
 |--------|----------|-------------|
 | GET | /api/agents | List agents |
 | POST | /api/agents | Create agent (human only) |
-| GET | /api/columns | List columns |
+| POST | /api/agents/:id/archive | Soft-archive agent (human only) |
+| POST | /api/agents/:id/unarchive | Restore archived agent (human only) |
+| DELETE | /api/agents/:id | Hard delete if no tasks; 409 if has tasks |
+| GET | /api/columns | List columns (`?include_archived=true`) |
 | POST | /api/columns | Create column (human only) |
+| POST | /api/columns/:id/archive | Soft-archive column (human only) |
+| POST | /api/columns/:id/unarchive | Restore archived column (human only) |
+| DELETE | /api/columns/:id | Hard delete if no tasks; 409 if has tasks |
 | GET | /api/secrets | List secrets (human only) |
 | POST | /api/secrets | Request secret |
 
@@ -247,7 +253,8 @@ Reusable blueprints for creating new agents. Managed in the Templates modal (Sid
 - `template_system_prompt` — optional behavioural framework prompt (like PM's). If set, agents created from this template get `is_template = 1` and this prompt propagated automatically; they show a `T` badge
 - Templates can be archived; editing a template only affects future agent creations
 - 3 default templates seeded on first run: Project Manager, Developer, Tester
-- **API**: `GET /api/agent-templates`, `POST`, `PATCH /:id`, `POST /:id/archive`, `POST /:id/unarchive`
+- **API**: `GET /api/agent-templates`, `POST`, `PATCH /:id`, `POST /:id/archive`, `POST /:id/unarchive`, `DELETE /:id`
+- Delete is hard-delete only when no agents were created from the template; otherwise 409 → archive instead
 - **API**: `POST /api/agents/:id/save-as-template` — snapshot an existing agent into a new template
 
 ### 2. Template Agents (`is_template` flag on agents)
@@ -301,6 +308,41 @@ flowagent/
 - CTO/Reviewer agent (optional code review before Human Review)
 - Column customization UI
 - Agent assignment dropdown restricted to allowed agents per column in the UI (API enforces it, but UI doesn't filter yet)
+
+## Archive / Delete Convention (applies everywhere in the codebase)
+
+**Rule: has dependencies → archive; no dependencies → delete.**
+
+This is a hard project convention. Every entity must have both archive and delete. When adding a new entity or endpoint, always follow this pattern:
+
+| Condition | Action |
+|---|---|
+| Entity has no relations/dependents | Hard delete (remove from DB) |
+| Entity has dependents (tasks, agents, etc.) | Archive only (soft delete — set `archived_at`, preserve in DB) |
+
+### Per-entity rules
+| Entity | Delete condition | Archive condition |
+|---|---|---|
+| **Task** | `human_approval_status != 'approved'` (never worked on) | Has been approved and moved to pipeline |
+| **Agent** | No tasks assigned (`assigned_agent_id` count = 0) | Has assigned tasks |
+| **Agent Template** | No agents created from it (`created_from_template_id` count = 0) | Agents exist that were created from it |
+| **Column** | No tasks in column | Has tasks |
+
+### Implementation pattern (server)
+- `POST /api/:resource/:id/archive` — set `archived_at = CURRENT_TIMESTAMP` (+ `active = 0` for agents)
+- `POST /api/:resource/:id/unarchive` — set `archived_at = NULL` (+ `active = 1` for agents)
+- `DELETE /api/:resource/:id` — hard delete if no dependents; return `409 { error: '...', has_dependencies: true }` if blocked
+- GET endpoints accept `?include_archived=true` to return soft-deleted records
+
+### Implementation pattern (frontend)
+- Always show both Archive and Delete buttons/options
+- If DELETE returns `409 { has_dependencies: true }`, show the error message and nudge toward archive
+- Archived items are fetched on `load()` (with `include_archived=true`) so they can be restored in the UI
+- Each entity has a restore path (unarchive) visible somewhere in the UI
+
+### DB schema fields
+- `archived_at DATETIME` — present on: tasks, agent_templates, agents, columns
+- `agents.active INTEGER` — also used for agents (alongside `archived_at`); Sidebar filters by `active = 1`
 
 ## Session Notes (2026-04-27)
 This session established the core PM → Human → Developer pipeline and the agent template system:
