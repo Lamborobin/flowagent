@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, Plus, Archive, RotateCcw, Pencil, Check, ChevronDown, ChevronRight, FileText, Lock, Unlock } from 'lucide-react';
+import { X, Plus, Archive, RotateCcw, Pencil, Trash2, Check, ChevronDown, ChevronRight, FileText, Lock, Unlock } from 'lucide-react';
 import { useStore } from '../store';
 import { instructionsApi } from '../api';
 import { MODELS, COLORS, displayName } from './AgentForm';
@@ -212,8 +212,21 @@ function TemplateForm({ initial = EMPTY_FORM, onSave, onCancel, availableFiles }
   );
 }
 
-function TemplateCard({ tpl, availableFiles, onEdit, onArchive, onUnarchive }) {
+function TemplateCard({ tpl, availableFiles, onEdit, onArchive, onUnarchive, onDelete }) {
   const isArchived = !!tpl.archived_at;
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  async function handleDelete() {
+    if (!confirmDelete) { setConfirmDelete(true); return; }
+    setConfirmDelete(false);
+    try {
+      await onDelete();
+    } catch (err) {
+      if (err.response?.data?.has_dependencies) {
+        alert(err.response.data.error);
+      }
+    }
+  }
 
   return (
     <div className={`bg-surface-3 border rounded-xl p-3.5 space-y-2.5 ${isArchived ? 'border-border opacity-60' : 'border-border hover:border-accent/30 transition-colors'}`}>
@@ -232,10 +245,16 @@ function TemplateCard({ tpl, availableFiles, onEdit, onArchive, onUnarchive }) {
         </div>
         <div className="flex items-center gap-1 shrink-0">
           {isArchived ? (
-            <button onClick={onUnarchive} title="Restore"
-              className="p-1.5 rounded-lg text-gray-600 hover:text-accent hover:bg-surface-1 transition-colors">
-              <RotateCcw size={12} />
-            </button>
+            <>
+              <button onClick={onUnarchive} title="Restore"
+                className="p-1.5 rounded-lg text-gray-600 hover:text-accent hover:bg-surface-1 transition-colors">
+                <RotateCcw size={12} />
+              </button>
+              <button onClick={handleDelete} title={confirmDelete ? 'Confirm delete?' : 'Delete permanently'}
+                className={`p-1.5 rounded-lg transition-colors ${confirmDelete ? 'text-red-400 bg-red-500/10' : 'text-gray-600 hover:text-red-400 hover:bg-surface-1'}`}>
+                <Trash2 size={12} />
+              </button>
+            </>
           ) : (
             <>
               <button onClick={onEdit} title="Edit"
@@ -245,6 +264,10 @@ function TemplateCard({ tpl, availableFiles, onEdit, onArchive, onUnarchive }) {
               <button onClick={onArchive} title="Archive"
                 className="p-1.5 rounded-lg text-gray-600 hover:text-amber-400 hover:bg-surface-1 transition-colors">
                 <Archive size={12} />
+              </button>
+              <button onClick={handleDelete} title={confirmDelete ? 'Confirm delete?' : 'Delete permanently'}
+                className={`p-1.5 rounded-lg transition-colors ${confirmDelete ? 'text-red-400 bg-red-500/10' : 'text-gray-600 hover:text-red-400 hover:bg-surface-1'}`}>
+                <Trash2 size={12} />
               </button>
             </>
           )}
@@ -287,7 +310,7 @@ function TemplateCard({ tpl, availableFiles, onEdit, onArchive, onUnarchive }) {
 }
 
 export default function TemplatesModal() {
-  const { agentTemplates, createTemplate, updateTemplate, archiveTemplate, unarchiveTemplate, setShowTemplates } = useStore();
+  const { agentTemplates, createTemplate, updateTemplate, archiveTemplate, unarchiveTemplate, deleteTemplate, setShowTemplates } = useStore();
   const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [showArchived, setShowArchived] = useState(false);
@@ -366,6 +389,7 @@ export default function TemplatesModal() {
                 onEdit={() => { setEditingId(tpl.id); setCreating(false); }}
                 onArchive={() => archiveTemplate(tpl.id)}
                 onUnarchive={() => unarchiveTemplate(tpl.id)}
+                onDelete={() => deleteTemplate(tpl.id)}
               />
             )
           )}
@@ -390,6 +414,7 @@ export default function TemplatesModal() {
                       onEdit={() => {}}
                       onArchive={() => {}}
                       onUnarchive={() => unarchiveTemplate(tpl.id)}
+                      onDelete={() => deleteTemplate(tpl.id)}
                     />
                   ))}
                 </div>

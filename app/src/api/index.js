@@ -24,9 +24,11 @@ export const tasksApi = {
 };
 
 export const columnsApi = {
-  list: () => api.get('/columns').then(r => r.data),
+  list: (includeArchived = false) => api.get('/columns', { params: { include_archived: includeArchived } }).then(r => r.data),
   create: (data) => api.post('/columns', data).then(r => r.data),
   update: (id, data) => api.patch(`/columns/${id}`, data).then(r => r.data),
+  archive: (id) => api.post(`/columns/${id}/archive`).then(r => r.data),
+  unarchive: (id) => api.post(`/columns/${id}/unarchive`).then(r => r.data),
   delete: (id) => api.delete(`/columns/${id}`).then(r => r.data),
 };
 
@@ -35,6 +37,8 @@ export const agentsApi = {
   get: (id) => api.get(`/agents/${id}`).then(r => r.data),
   create: (data) => api.post('/agents', data).then(r => r.data),
   update: (id, data) => api.patch(`/agents/${id}`, data).then(r => r.data),
+  archive: (id) => api.post(`/agents/${id}/archive`).then(r => r.data),
+  unarchive: (id) => api.post(`/agents/${id}/unarchive`).then(r => r.data),
   delete: (id) => api.delete(`/agents/${id}`).then(r => r.data),
 };
 
@@ -56,6 +60,7 @@ export const agentTemplatesApi = {
   update: (id, data) => api.patch(`/agent-templates/${id}`, data).then(r => r.data),
   archive: (id) => api.post(`/agent-templates/${id}/archive`).then(r => r.data),
   unarchive: (id) => api.post(`/agent-templates/${id}/unarchive`).then(r => r.data),
+  delete: (id) => api.delete(`/agent-templates/${id}`).then(r => r.data),
   saveAgentAs: (agentId, data) => api.post(`/agents/${agentId}/save-as-template`, data).then(r => r.data),
 };
 

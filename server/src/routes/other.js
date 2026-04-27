@@ -133,13 +133,46 @@ agentsRouter.patch('/:id', (req, res) => {
   res.json(parseAgent(updated));
 });
 
+agentsRouter.post('/:id/archive', (req, res) => {
+  const agentId = req.headers['x-agent-id'];
+  if (agentId !== 'human') return res.status(403).json({ error: 'Only humans can archive agents' });
+
+  const db = getDb();
+  const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
+  if (!agent) return res.status(404).json({ error: 'Agent not found' });
+
+  db.prepare('UPDATE agents SET active = 0, archived_at = CURRENT_TIMESTAMP WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+agentsRouter.post('/:id/unarchive', (req, res) => {
+  const agentId = req.headers['x-agent-id'];
+  if (agentId !== 'human') return res.status(403).json({ error: 'Only humans can unarchive agents' });
+
+  const db = getDb();
+  db.prepare('UPDATE agents SET active = 1, archived_at = NULL WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
 agentsRouter.delete('/:id', (req, res) => {
   const agentId = req.headers['x-agent-id'];
   if (agentId !== 'human') return res.status(403).json({ error: 'Only humans can delete agents' });
 
   const db = getDb();
-  db.prepare('UPDATE agents SET active = 0 WHERE id = ?').run(req.params.id);
-  res.json({ ok: true });
+  const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
+  if (!agent) return res.status(404).json({ error: 'Agent not found' });
+
+  const taskCount = db.prepare('SELECT COUNT(*) as c FROM tasks WHERE assigned_agent_id = ?').get(req.params.id);
+  if (taskCount.c > 0) {
+    return res.status(409).json({
+      error: `Agent has ${taskCount.c} assigned task(s) — archive it instead to preserve history.`,
+      has_dependencies: true,
+      task_count: taskCount.c,
+    });
+  }
+
+  db.prepare('DELETE FROM agents WHERE id = ?').run(req.params.id);
+  res.json({ ok: true, deleted: true });
 });
 
 // ── Columns ───────────────────────────────────────────────────────────────────
@@ -147,7 +180,9 @@ const columnsRouter = express.Router();
 
 columnsRouter.get('/', attachAgent, (req, res) => {
   const db = getDb();
-  const columns = db.prepare('SELECT * FROM columns ORDER BY position ASC').all();
+  const includeArchived = req.query.include_archived === 'true';
+  const where = includeArchived ? '' : 'WHERE archived_at IS NULL';
+  const columns = db.prepare(`SELECT * FROM columns ${where} ORDER BY position ASC`).all();
 
   // Attach task counts
   const counts = db.prepare('SELECT column_id, COUNT(*) as count FROM tasks GROUP BY column_id').all();
@@ -189,16 +224,46 @@ columnsRouter.patch('/:id', (req, res) => {
   res.json(db.prepare('SELECT * FROM columns WHERE id = ?').get(req.params.id));
 });
 
+columnsRouter.post('/:id/archive', (req, res) => {
+  const agentId = req.headers['x-agent-id'];
+  if (agentId !== 'human') return res.status(403).json({ error: 'Only humans can archive columns' });
+
+  const db = getDb();
+  const col = db.prepare('SELECT * FROM columns WHERE id = ?').get(req.params.id);
+  if (!col) return res.status(404).json({ error: 'Column not found' });
+
+  db.prepare('UPDATE columns SET archived_at = CURRENT_TIMESTAMP WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+columnsRouter.post('/:id/unarchive', (req, res) => {
+  const agentId = req.headers['x-agent-id'];
+  if (agentId !== 'human') return res.status(403).json({ error: 'Only humans can unarchive columns' });
+
+  const db = getDb();
+  db.prepare('UPDATE columns SET archived_at = NULL WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
 columnsRouter.delete('/:id', (req, res) => {
   const agentId = req.headers['x-agent-id'];
   if (agentId !== 'human') return res.status(403).json({ error: 'Only humans can delete columns' });
 
   const db = getDb();
-  const tasks = db.prepare('SELECT COUNT(*) as c FROM tasks WHERE column_id = ?').get(req.params.id);
-  if (tasks.c > 0) return res.status(409).json({ error: 'Cannot delete column with tasks. Move tasks first.' });
+  const col = db.prepare('SELECT * FROM columns WHERE id = ?').get(req.params.id);
+  if (!col) return res.status(404).json({ error: 'Column not found' });
+
+  const taskCount = db.prepare('SELECT COUNT(*) as c FROM tasks WHERE column_id = ?').get(req.params.id);
+  if (taskCount.c > 0) {
+    return res.status(409).json({
+      error: `Column has ${taskCount.c} task(s) — archive it instead to preserve the tasks.`,
+      has_dependencies: true,
+      task_count: taskCount.c,
+    });
+  }
 
   db.prepare('DELETE FROM columns WHERE id = ?').run(req.params.id);
-  res.json({ ok: true });
+  res.json({ ok: true, deleted: true });
 });
 
 // ── Secrets ───────────────────────────────────────────────────────────────────
@@ -373,6 +438,27 @@ agentTemplatesRouter.post('/:id/unarchive', (req, res) => {
   const db = getDb();
   db.prepare('UPDATE agent_templates SET archived_at = NULL WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
+});
+
+agentTemplatesRouter.delete('/:id', (req, res) => {
+  const agentId = req.headers['x-agent-id'];
+  if (agentId !== 'human') return res.status(403).json({ error: 'Only humans can delete templates' });
+
+  const db = getDb();
+  const tpl = db.prepare('SELECT * FROM agent_templates WHERE id = ?').get(req.params.id);
+  if (!tpl) return res.status(404).json({ error: 'Template not found' });
+
+  const agentCount = db.prepare('SELECT COUNT(*) as c FROM agents WHERE created_from_template_id = ?').get(req.params.id);
+  if (agentCount.c > 0) {
+    return res.status(409).json({
+      error: `Template was used to create ${agentCount.c} agent(s) — archive it instead to preserve the link.`,
+      has_dependencies: true,
+      agent_count: agentCount.c,
+    });
+  }
+
+  db.prepare('DELETE FROM agent_templates WHERE id = ?').run(req.params.id);
+  res.json({ ok: true, deleted: true });
 });
 
 module.exports = { agentsRouter, columnsRouter, secretsRouter, instructionsRouter, agentTemplatesRouter };

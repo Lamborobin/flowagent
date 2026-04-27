@@ -193,6 +193,13 @@ function initDb() {
     console.log('✅ Migrated: added archived_at to tasks');
   }
 
+  // Migration: add archived_at to columns table
+  const colTableCols = db.prepare('PRAGMA table_info(columns)').all().map(c => c.name);
+  if (!colTableCols.includes('archived_at')) {
+    db.exec('ALTER TABLE columns ADD COLUMN archived_at DATETIME');
+    console.log('✅ Migrated: added archived_at to columns');
+  }
+
   // Migration: add columns if missing (existing DBs)
   const agentCols = db.prepare('PRAGMA table_info(agents)').all();
   const agentColNames = agentCols.map(c => c.name);
@@ -221,6 +228,10 @@ function initDb() {
   if (!agentColNames.includes('created_from_template_id')) {
     db.exec('ALTER TABLE agents ADD COLUMN created_from_template_id TEXT');
     console.log('✅ Migrated: added created_from_template_id to agents');
+  }
+  if (!agentColNames.includes('archived_at')) {
+    db.exec('ALTER TABLE agents ADD COLUMN archived_at DATETIME');
+    console.log('✅ Migrated: added archived_at to agents');
   }
 
   // Migration: add template_system_prompt to agent_templates if missing

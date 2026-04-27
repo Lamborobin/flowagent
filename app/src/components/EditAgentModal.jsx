@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { X, Save, Trash2, LayoutTemplate, Check } from 'lucide-react';
+import { X, Save, Trash2, Archive, LayoutTemplate, Check } from 'lucide-react';
 import { useStore } from '../store';
 import {
   useAgentForm,
@@ -9,7 +9,7 @@ import {
 import { instructionsApi } from '../api';
 
 export default function EditAgentModal() {
-  const { editingAgent, updateAgent, deleteAgent, saveAgentAsTemplate, agentTemplates, setEditingAgent } = useStore();
+  const { editingAgent, updateAgent, deleteAgent, archiveAgent, saveAgentAsTemplate, agentTemplates, setEditingAgent } = useStore();
   const agent = editingAgent;
 
   const {
@@ -34,6 +34,7 @@ export default function EditAgentModal() {
 
   const [saving, setSaving] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [confirmingArchive, setConfirmingArchive] = useState(false);
   const [error, setError] = useState('');
   const [savingAsTemplate, setSavingAsTemplate] = useState(false);
   const [templateName, setTemplateName] = useState(agent.name);
@@ -76,10 +77,26 @@ export default function EditAgentModal() {
     }
   }
 
+  async function handleArchiveAgent() {
+    if (!confirmingArchive) { setConfirmingArchive(true); return; }
+    await archiveAgent(agent.id);
+    close();
+  }
+
   async function handleDelete() {
     if (!confirming) { setConfirming(true); return; }
-    await deleteAgent(agent.id);
-    close();
+    try {
+      await deleteAgent(agent.id);
+      close();
+    } catch (err) {
+      setConfirming(false);
+      if (err.response?.data?.has_dependencies) {
+        setConfirmingArchive(true);
+        setError(err.response.data.error);
+      } else {
+        setError(err.response?.data?.error || err.message || 'Failed to delete');
+      }
+    }
   }
 
   async function handleSaveAsTemplate() {
@@ -224,7 +241,19 @@ export default function EditAgentModal() {
             <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{error}</p>
           )}
 
-          <div className="flex gap-3 pt-2">
+          <div className="flex gap-2 pt-2 flex-wrap">
+            <button
+              type="button"
+              onClick={handleArchiveAgent}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs transition-colors ${
+                confirmingArchive
+                  ? 'bg-amber-500/20 border border-amber-500/40 text-amber-400'
+                  : 'btn-ghost text-gray-600 hover:text-amber-400'
+              }`}
+            >
+              <Archive size={13} />
+              {confirmingArchive ? 'Confirm archive?' : 'Archive'}
+            </button>
             <button
               type="button"
               onClick={handleDelete}
@@ -235,7 +264,7 @@ export default function EditAgentModal() {
               }`}
             >
               <Trash2 size={13} />
-              {confirming ? 'Confirm remove' : 'Remove'}
+              {confirming ? 'Confirm delete?' : 'Delete'}
             </button>
             <button type="button" onClick={close} className="btn-ghost flex-1 justify-center py-2">
               Cancel
