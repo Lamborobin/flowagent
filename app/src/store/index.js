@@ -19,7 +19,7 @@ export const useStore = create((set, get) => ({
     set({ loading: true });
     try {
       const [columns, tasks, agents, agentTemplates] = await Promise.all([
-        columnsApi.list(),
+        columnsApi.list(true), // include archived so they can be restored
         tasksApi.list(),
         agentsApi.list(),
         agentTemplatesApi.list(true),
@@ -78,15 +78,30 @@ export const useStore = create((set, get) => ({
     set(s => ({ agents: s.agents.map(a => a.id === id ? updated : a) }));
   },
 
+  async archiveAgent(id) {
+    await agentsApi.archive(id);
+    set(s => ({ agents: s.agents.map(a => a.id === id ? { ...a, active: 0, archived_at: new Date().toISOString() } : a) }));
+  },
+
   async deleteAgent(id) {
     await agentsApi.delete(id);
-    set(s => ({ agents: s.agents.map(a => a.id === id ? { ...a, active: 0 } : a) }));
+    set(s => ({ agents: s.agents.filter(a => a.id !== id) }));
   },
 
   // Columns
   async createColumn(data) {
     const col = await columnsApi.create(data);
     set(s => ({ columns: [...s.columns, col] }));
+  },
+
+  async archiveColumn(id) {
+    await columnsApi.archive(id);
+    set(s => ({ columns: s.columns.map(c => c.id === id ? { ...c, archived_at: new Date().toISOString() } : c) }));
+  },
+
+  async unarchiveColumn(id) {
+    await columnsApi.unarchive(id);
+    set(s => ({ columns: s.columns.map(c => c.id === id ? { ...c, archived_at: null } : c) }));
   },
 
   async deleteColumn(id) {
@@ -123,6 +138,11 @@ export const useStore = create((set, get) => ({
         t.id === id ? { ...t, archived_at: null } : t
       ),
     }));
+  },
+
+  async deleteTemplate(id) {
+    await agentTemplatesApi.delete(id);
+    set(s => ({ agentTemplates: s.agentTemplates.filter(t => t.id !== id) }));
   },
 
   async saveAgentAsTemplate(agentId, data) {

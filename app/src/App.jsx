@@ -1,6 +1,6 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { DndContext, DragOverlay, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
-import { Plus, RefreshCw } from 'lucide-react';
+import { Plus, RefreshCw, ChevronDown, ChevronRight, Archive, RotateCcw, Trash2 } from 'lucide-react';
 import { useStore } from './store';
 import Sidebar from './components/Sidebar';
 import Column from './components/Column';
@@ -10,11 +10,14 @@ import NewTaskModal from './components/NewTaskModal';
 import NewAgentModal from './components/NewAgentModal';
 import EditAgentModal from './components/EditAgentModal';
 import TemplatesModal from './components/TemplatesModal';
-import { useState } from 'react';
 
 export default function App() {
-  const { columns, tasks, loading, load, moveTask, selectedTask, showNewTask, showNewAgent, showTemplates, editingAgent, setShowNewTask } = useStore();
+  const { columns, tasks, loading, load, moveTask, selectedTask, showNewTask, showNewAgent, showTemplates, editingAgent, setShowNewTask, unarchiveColumn, deleteColumn } = useStore();
   const [dragging, setDragging] = useState(null);
+  const [showArchivedCols, setShowArchivedCols] = useState(false);
+
+  const activeColumns = columns.filter(c => !c.archived_at);
+  const archivedColumns = columns.filter(c => !!c.archived_at);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
@@ -71,14 +74,48 @@ export default function App() {
         <DndContext sensors={sensors} collisionDetection={closestCenter}
           onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
           <div className="flex-1 overflow-x-auto overflow-y-hidden">
-            <div className="flex gap-4 h-full p-5 min-w-max">
-              {columns.map(col => (
-                <Column
-                  key={col.id}
-                  column={col}
-                  tasks={tasks.filter(t => t.column_id === col.id)}
-                />
-              ))}
+            <div className="flex flex-col h-full">
+              <div className="flex gap-4 flex-1 overflow-y-hidden p-5 min-w-max">
+                {activeColumns.map(col => (
+                  <Column
+                    key={col.id}
+                    column={col}
+                    tasks={tasks.filter(t => t.column_id === col.id)}
+                  />
+                ))}
+              </div>
+              {/* Archived columns strip */}
+              {archivedColumns.length > 0 && (
+                <div className="shrink-0 border-t border-border bg-surface-1/50 px-5 py-2">
+                  <button
+                    onClick={() => setShowArchivedCols(v => !v)}
+                    className="flex items-center gap-2 text-xs text-gray-600 hover:text-gray-400 transition-colors"
+                  >
+                    {showArchivedCols ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+                    <Archive size={11} />
+                    Archived columns ({archivedColumns.length})
+                  </button>
+                  {showArchivedCols && (
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {archivedColumns.map(col => (
+                        <div key={col.id} className="flex items-center gap-2 px-3 py-1.5 bg-surface-2 border border-border rounded-lg opacity-60 hover:opacity-100 transition-opacity">
+                          <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: col.color }} />
+                          <span className="text-xs text-gray-400">{col.name}</span>
+                          <span className="text-[10px] font-mono text-gray-600">{tasks.filter(t => t.column_id === col.id).length} tasks</span>
+                          <button onClick={() => unarchiveColumn(col.id)} title="Restore column"
+                            className="p-0.5 text-gray-600 hover:text-accent transition-colors">
+                            <RotateCcw size={11} />
+                          </button>
+                          <button onClick={() => deleteColumn(col.id)} title="Delete column permanently"
+                            className="p-0.5 text-gray-600 hover:text-red-400 transition-colors">
+                            <Trash2 size={11} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 

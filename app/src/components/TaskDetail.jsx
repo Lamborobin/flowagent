@@ -78,7 +78,15 @@ export default function TaskDetail() {
 
   async function handleDelete() {
     if (!confirmDelete) { setConfirmDelete(true); return; }
-    await deleteTask(task.id);
+    try {
+      await deleteTask(task.id);
+    } catch (err) {
+      setConfirmDelete(false);
+      if (err.response?.data?.has_dependencies) {
+        setConfirmArchive(true); // nudge toward archive
+        alert(err.response.data.error);
+      }
+    }
   }
 
   async function handleArchive() {

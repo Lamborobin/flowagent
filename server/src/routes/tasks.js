@@ -471,8 +471,15 @@ router.delete('/:id', requirePermission('task:delete'), (req, res) => {
   const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
   if (!task) return res.status(404).json({ error: 'Task not found' });
 
+  if (task.human_approval_status === 'approved') {
+    return res.status(409).json({
+      error: 'Task has been through the approval pipeline — archive it instead to preserve history.',
+      has_dependencies: true,
+    });
+  }
+
   db.prepare('DELETE FROM tasks WHERE id = ?').run(req.params.id);
-  res.json({ ok: true });
+  res.json({ ok: true, deleted: true });
 });
 
 module.exports = router;
