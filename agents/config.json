@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "description": "FlowAgent agent configuration. Edit to add/merge/remove roles.",
+  "description": "AutoKan agent configuration. Edit to add/merge/remove roles.",
 
   "models": {
     "default": "claude-sonnet-4-5",

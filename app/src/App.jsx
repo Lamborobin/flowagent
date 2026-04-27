@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { DndContext, DragOverlay, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
-import { Plus, RefreshCw, ChevronDown, ChevronRight, Archive, RotateCcw, Trash2 } from 'lucide-react';
+import { RefreshCw, ChevronDown, ChevronRight, Archive, RotateCcw, Trash2 } from 'lucide-react';
 import { useStore } from './store';
 import Sidebar from './components/Sidebar';
 import Column from './components/Column';
@@ -12,7 +12,7 @@ import EditAgentModal from './components/EditAgentModal';
 import TemplatesModal from './components/TemplatesModal';
 
 export default function App() {
-  const { columns, tasks, loading, load, moveTask, selectedTask, showNewTask, showNewAgent, showTemplates, editingAgent, setShowNewTask, unarchiveColumn, deleteColumn } = useStore();
+  const { columns, tasks, loading, load, moveTask, selectedTask, showNewTask, showNewAgent, showTemplates, editingAgent, unarchiveColumn, deleteColumn } = useStore();
   const [dragging, setDragging] = useState(null);
   const [showArchivedCols, setShowArchivedCols] = useState(false);
 
@@ -55,21 +55,12 @@ export default function App() {
       <Sidebar />
 
       {/* Main */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Topbar */}
-        <header className="flex items-center justify-between px-5 py-3 border-b border-border bg-surface-1 shrink-0">
-          <div className="flex items-center gap-3">
-            <h1 className="text-sm font-semibold text-gray-200">Kanban Board</h1>
-            {loading && (
-              <RefreshCw size={12} className="text-gray-600 animate-spin" />
-            )}
+      <div className="flex-1 flex flex-col overflow-hidden relative">
+        {loading && (
+          <div className="absolute top-3 right-4 z-10">
+            <RefreshCw size={11} className="text-gray-600 animate-spin" />
           </div>
-          <button onClick={() => setShowNewTask(true)} className="btn-primary text-xs px-3 py-1.5">
-            <Plus size={13} />
-            New Task
-          </button>
-        </header>
-
+        )}
         {/* Board */}
         <DndContext sensors={sensors} collisionDetection={closestCenter}
           onDragStart={handleDragStart} onDragEnd={handleDragEnd}>

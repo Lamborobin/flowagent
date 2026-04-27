@@ -1,8 +1,8 @@
-# Project Context — FlowAgent
+# Project Context — AutoKan
 
 This file gives the PM agent background knowledge about the project so it can ask smarter planning questions.
 
-## What Is FlowAgent?
+## What Is AutoKan?
 An autonomous AI agent task orchestration system — a kanban board where AI agents (PM, Developer, Tester) work through software tasks autonomously. Human stays in the loop at key checkpoints.
 
 ## Tech Stack
