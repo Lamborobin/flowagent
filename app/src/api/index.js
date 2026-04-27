@@ -49,8 +49,13 @@ export const secretsApi = {
 };
 
 export const instructionsApi = {
-  list: () => api.get('/instructions').then(r => r.data),
+  list: (includeArchived = false) => api.get('/instructions', { params: { include_archived: includeArchived } }).then(r => r.data),
+  get: (filename) => api.get(`/instructions/${filename}`).then(r => r.data),
   create: (data) => api.post('/instructions', data).then(r => r.data),
+  update: (filename, content) => api.patch(`/instructions/${filename}`, { content }).then(r => r.data),
+  archive: (filename) => api.post(`/instructions/${filename}/archive`).then(r => r.data),
+  unarchive: (filename) => api.post(`/instructions/${filename}/unarchive`).then(r => r.data),
+  delete: (filename) => api.delete(`/instructions/${filename}`).then(r => r.data),
 };
 
 export const agentTemplatesApi = {

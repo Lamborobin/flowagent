@@ -231,6 +231,7 @@ columnsRouter.post('/:id/archive', (req, res) => {
   const db = getDb();
   const col = db.prepare('SELECT * FROM columns WHERE id = ?').get(req.params.id);
   if (!col) return res.status(404).json({ error: 'Column not found' });
+  if (col.is_protected) return res.status(403).json({ error: 'Core columns cannot be archived.' });
 
   db.prepare('UPDATE columns SET archived_at = CURRENT_TIMESTAMP WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
@@ -252,6 +253,7 @@ columnsRouter.delete('/:id', (req, res) => {
   const db = getDb();
   const col = db.prepare('SELECT * FROM columns WHERE id = ?').get(req.params.id);
   if (!col) return res.status(404).json({ error: 'Column not found' });
+  if (col.is_protected) return res.status(403).json({ error: 'Core columns cannot be deleted.' });
 
   const taskCount = db.prepare('SELECT COUNT(*) as c FROM tasks WHERE column_id = ?').get(req.params.id);
   if (taskCount.c > 0) {
@@ -309,21 +311,96 @@ secretsRouter.patch('/:id/resolve', (req, res) => {
 // ── Instructions ──────────────────────────────────────────────────────────────
 const instructionsRouter = express.Router();
 
+const DEFAULT_INSTRUCTION_FILES = ['client.md', 'project.md'];
+const INSTRUCTIONS_DIR = path.join(PROJECT_ROOT, 'instructions');
+const ARCHIVED_DIR = path.join(INSTRUCTIONS_DIR, 'archived');
+
+function listInstructionFiles(includeArchived = false) {
+  const active = fs.existsSync(INSTRUCTIONS_DIR)
+    ? fs.readdirSync(INSTRUCTIONS_DIR)
+        .filter(f => f.endsWith('.md'))
+        .map(f => ({
+          path: `instructions/${f}`,
+          name: f.replace('.md', ''),
+          label: f.replace('.md', '').replace(/_/g, ' '),
+          is_default: DEFAULT_INSTRUCTION_FILES.includes(f),
+          archived: false,
+        }))
+    : [];
+
+  if (!includeArchived) return active;
+
+  const archived = fs.existsSync(ARCHIVED_DIR)
+    ? fs.readdirSync(ARCHIVED_DIR)
+        .filter(f => f.endsWith('.md'))
+        .map(f => ({
+          path: `instructions/archived/${f}`,
+          name: f.replace('.md', ''),
+          label: f.replace('.md', '').replace(/_/g, ' '),
+          is_default: false,
+          archived: true,
+        }))
+    : [];
+
+  return [...active, ...archived];
+}
+
+function getAgentReferences(db, filename) {
+  const filePath = `instructions/${filename}`;
+  const agents = db.prepare('SELECT id FROM agents WHERE prompt_file = ? OR instruction_files LIKE ?').all(
+    filePath, `%${filePath}%`
+  );
+  return agents.map(a => a.id);
+}
+
 // GET /api/instructions — list all .md files in instructions/ folder
 instructionsRouter.get('/', attachAgent, (req, res) => {
-  const instructionsDir = path.join(PROJECT_ROOT, 'instructions');
-  try {
-    const files = fs.readdirSync(instructionsDir)
-      .filter(f => f.endsWith('.md'))
-      .map(f => ({
-        path: `instructions/${f}`,
-        name: f.replace('.md', ''),
-        label: f.replace('.md', '').replace(/_/g, ' '),
-      }));
-    res.json(files);
-  } catch {
-    res.json([]);
+  const includeArchived = req.query.include_archived === 'true';
+  res.json(listInstructionFiles(includeArchived));
+});
+
+// GET /api/instructions/:filename — read file content
+instructionsRouter.get('/:filename', attachAgent, (req, res) => {
+  const { filename } = req.params;
+  if (!filename.endsWith('.md') || filename.includes('/') || filename.includes('..')) {
+    return res.status(400).json({ error: 'Invalid filename' });
   }
+  const filePath = path.join(INSTRUCTIONS_DIR, filename);
+  const archivedPath = path.join(ARCHIVED_DIR, filename);
+
+  if (fs.existsSync(filePath)) {
+    return res.json({ content: fs.readFileSync(filePath, 'utf8'), archived: false });
+  }
+  if (fs.existsSync(archivedPath)) {
+    return res.json({ content: fs.readFileSync(archivedPath, 'utf8'), archived: true });
+  }
+  res.status(404).json({ error: 'File not found' });
+});
+
+// PATCH /api/instructions/:filename — update file content
+instructionsRouter.patch('/:filename', (req, res) => {
+  if (req.headers['x-agent-id'] !== 'human') return res.status(403).json({ error: 'Only humans can edit instruction files' });
+
+  const { filename } = req.params;
+  if (!filename.endsWith('.md') || filename.includes('/') || filename.includes('..')) {
+    return res.status(400).json({ error: 'Invalid filename' });
+  }
+
+  const { content } = req.body;
+  if (content === undefined) return res.status(400).json({ error: 'content is required' });
+
+  const filePath = path.join(INSTRUCTIONS_DIR, filename);
+  const archivedPath = path.join(ARCHIVED_DIR, filename);
+
+  if (fs.existsSync(filePath)) {
+    fs.writeFileSync(filePath, content, 'utf8');
+    return res.json({ ok: true });
+  }
+  if (fs.existsSync(archivedPath)) {
+    fs.writeFileSync(archivedPath, content, 'utf8');
+    return res.json({ ok: true });
+  }
+  res.status(404).json({ error: 'File not found' });
 });
 
 // POST /api/instructions — create a new .md file in instructions/
@@ -345,14 +422,86 @@ instructionsRouter.post('/', (req, res) => {
   if (!safeName) return res.status(400).json({ error: 'Invalid file name' });
 
   const filename = `${safeName}.md`;
-  const filePath = path.join(PROJECT_ROOT, 'instructions', filename);
+  const filePath = path.join(INSTRUCTIONS_DIR, filename);
 
   if (fs.existsSync(filePath)) {
     return res.status(409).json({ error: `File "${filename}" already exists` });
   }
 
   fs.writeFileSync(filePath, content, 'utf8');
-  res.status(201).json({ path: `instructions/${filename}`, name: safeName });
+  res.status(201).json({ path: `instructions/${filename}`, name: safeName, is_default: false, archived: false });
+});
+
+// POST /api/instructions/:filename/archive — move to archived/ subfolder
+instructionsRouter.post('/:filename/archive', (req, res) => {
+  if (req.headers['x-agent-id'] !== 'human') return res.status(403).json({ error: 'Only humans can archive instruction files' });
+
+  const { filename } = req.params;
+  if (!filename.endsWith('.md') || filename.includes('/') || filename.includes('..')) {
+    return res.status(400).json({ error: 'Invalid filename' });
+  }
+  if (DEFAULT_INSTRUCTION_FILES.includes(filename)) {
+    return res.status(403).json({ error: 'Default files cannot be archived' });
+  }
+
+  const src = path.join(INSTRUCTIONS_DIR, filename);
+  if (!fs.existsSync(src)) return res.status(404).json({ error: 'File not found' });
+
+  if (!fs.existsSync(ARCHIVED_DIR)) fs.mkdirSync(ARCHIVED_DIR, { recursive: true });
+
+  fs.renameSync(src, path.join(ARCHIVED_DIR, filename));
+  res.json({ ok: true, archived: true });
+});
+
+// POST /api/instructions/:filename/unarchive — restore from archived/
+instructionsRouter.post('/:filename/unarchive', (req, res) => {
+  if (req.headers['x-agent-id'] !== 'human') return res.status(403).json({ error: 'Only humans can restore instruction files' });
+
+  const { filename } = req.params;
+  if (!filename.endsWith('.md') || filename.includes('/') || filename.includes('..')) {
+    return res.status(400).json({ error: 'Invalid filename' });
+  }
+
+  const src = path.join(ARCHIVED_DIR, filename);
+  if (!fs.existsSync(src)) return res.status(404).json({ error: 'Archived file not found' });
+
+  const dest = path.join(INSTRUCTIONS_DIR, filename);
+  if (fs.existsSync(dest)) return res.status(409).json({ error: `A file named "${filename}" already exists in instructions/` });
+
+  fs.renameSync(src, dest);
+  res.json({ ok: true, archived: false });
+});
+
+// DELETE /api/instructions/:filename — hard delete if no agent references
+instructionsRouter.delete('/:filename', (req, res) => {
+  if (req.headers['x-agent-id'] !== 'human') return res.status(403).json({ error: 'Only humans can delete instruction files' });
+
+  const { filename } = req.params;
+  if (!filename.endsWith('.md') || filename.includes('/') || filename.includes('..')) {
+    return res.status(400).json({ error: 'Invalid filename' });
+  }
+  if (DEFAULT_INSTRUCTION_FILES.includes(filename)) {
+    return res.status(403).json({ error: 'Default files cannot be deleted' });
+  }
+
+  const db = getDb();
+  const refs = getAgentReferences(db, filename);
+  if (refs.length > 0) {
+    return res.status(409).json({ error: 'File is referenced by agents — archive it instead', has_dependencies: true, agents: refs });
+  }
+
+  const activePath = path.join(INSTRUCTIONS_DIR, filename);
+  const archivedPath = path.join(ARCHIVED_DIR, filename);
+
+  if (fs.existsSync(activePath)) {
+    fs.unlinkSync(activePath);
+    return res.json({ ok: true, deleted: true });
+  }
+  if (fs.existsSync(archivedPath)) {
+    fs.unlinkSync(archivedPath);
+    return res.json({ ok: true, deleted: true });
+  }
+  res.status(404).json({ error: 'File not found' });
 });
 
 // ── Agent Templates ───────────────────────────────────────────────────────────

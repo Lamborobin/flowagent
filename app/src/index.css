@@ -2,14 +2,56 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Theme tokens ─────────────────────────────────────────────────────────── */
+/* Values are space-separated RGB channels so Tailwind opacity utilities work  */
+:root {
+  --surface-0: 10 10 15;
+  --surface-1: 17 17 24;
+  --surface-2: 24 24 31;
+  --surface-3: 31 31 40;
+  --surface-4: 42 42 54;
+  --color-border: 46 46 62;
+  --accent: 124 106 247;
+}
+
+:root.light {
+  --surface-0: 244 244 248;
+  --surface-1: 255 255 255;
+  --surface-2: 235 235 242;
+  --surface-3: 225 225 234;
+  --surface-4: 212 212 224;
+  --color-border: 208 208 222;
+  --accent: 124 106 247;
+}
+
+/* Flip Tailwind's gray scale in light mode so gray-200 = dark text, gray-600 = muted */
+.light .text-gray-100 { color: #060612 !important; }
+.light .text-gray-200 { color: #111128 !important; }
+.light .text-gray-300 { color: #22223a !important; }
+.light .text-gray-400 { color: #3c3c58 !important; }
+.light .text-gray-500 { color: #5a5a7a !important; }
+.light .text-gray-600 { color: #7878a0 !important; }
+.light .text-gray-700 { color: #9898b8 !important; }
+
+.light .placeholder-gray-600::placeholder { color: #9898b8; }
+.light .placeholder-gray-700::placeholder { color: #aaaacc; }
+
+/* Scrollbar */
+.light ::-webkit-scrollbar-thumb { background: #c8c8d8; }
+.light ::-webkit-scrollbar-thumb:hover { background: #b0b0c8; }
+
 @layer base {
   * { box-sizing: border-box; }
 
   body {
-    background-color: #0a0a0f;
+    background-color: rgb(var(--surface-0));
     color: #e2e2f0;
     font-family: 'IBM Plex Sans', sans-serif;
     -webkit-font-smoothing: antialiased;
+  }
+
+  .light body {
+    color: #111128;
   }
 
   ::-webkit-scrollbar { width: 6px; height: 6px; }

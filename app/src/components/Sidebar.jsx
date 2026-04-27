@@ -1,7 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
-import { Bot, Plus, Settings, ChevronDown, ChevronRight, AlertCircle, FileText, X, Cpu, Pencil, LayoutTemplate, AlignStartHorizontal, Home, User } from 'lucide-react';
+import { Bot, Plus, Settings, ChevronDown, ChevronRight, AlertCircle, FileText, X, Cpu, Pencil, LayoutTemplate, AlignStartHorizontal, Home } from 'lucide-react';
 import { useStore } from '../store';
-import SettingsModal from './SettingsModal';
 
 function AgentPanel({ agent, onClose, onEdit }) {
   const instructionFiles = agent.instruction_files || [];
@@ -89,17 +88,15 @@ function AgentPanel({ agent, onClose, onEdit }) {
 }
 
 const NAV_ITEMS = [
-  { label: 'Home', icon: Home, href: '/' },
-  { label: 'Settings', icon: Settings, href: '/settings' },
-  { label: 'User', icon: User, href: '/user' },
+  { label: 'Board', icon: Home, page: 'board' },
+  { label: 'Settings', icon: Settings, page: 'settings' },
 ];
 
 export default function Sidebar() {
-  const { agents, tasks, agentTemplates, setShowNewAgent, setShowNewTask, setShowTemplates, setEditingAgent } = useStore();
+  const { agents, tasks, agentTemplates, setShowNewAgent, setShowNewTask, setShowTemplates, setEditingAgent, currentPage, setCurrentPage } = useStore();
   const [agentsOpen, setAgentsOpen] = useState(true);
   const [selectedAgentId, setSelectedAgentId] = useState(null);
   const [navOpen, setNavOpen] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
   const navRef = useRef(null);
 
   const humanActionCount = tasks.filter(t => t.column_id === 'col_humanaction').length;
@@ -138,16 +135,15 @@ export default function Sidebar() {
 
               {navOpen && (
                 <div className="absolute left-0 top-full mt-1.5 w-36 bg-surface-2 border border-border rounded-xl shadow-xl z-50 py-1 overflow-hidden">
-                  {NAV_ITEMS.map(({ label, icon: Icon, href }) => (
-                    <a
-                      key={href}
-                      href={href}
-                      className="flex items-center gap-2.5 px-3 py-2 text-xs text-gray-400 hover:text-gray-100 hover:bg-surface-3 transition-colors"
-                      onClick={() => setNavOpen(false)}
+                  {NAV_ITEMS.map(({ label, icon: Icon, page }) => (
+                    <button
+                      key={page}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2 text-xs hover:bg-surface-3 transition-colors ${currentPage === page ? 'text-accent' : 'text-gray-400 hover:text-gray-100'}`}
+                      onClick={() => { setCurrentPage(page); setNavOpen(false); }}
                     >
                       <Icon size={12} />
                       {label}
-                    </a>
+                    </button>
                   ))}
                 </div>
               )}
@@ -266,16 +262,18 @@ export default function Sidebar() {
         {/* Footer */}
         <div className="p-3 border-t border-border">
           <button
-            onClick={() => setShowSettings(true)}
-            className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-gray-600 hover:text-gray-400 hover:bg-surface-3 transition-colors text-xs"
+            onClick={() => setCurrentPage(currentPage === 'settings' ? 'board' : 'settings')}
+            className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg transition-colors text-xs ${
+              currentPage === 'settings'
+                ? 'bg-accent/15 text-accent'
+                : 'text-gray-600 hover:text-gray-400 hover:bg-surface-3'
+            }`}
           >
             <Settings size={12} />
             Settings
           </button>
         </div>
       </aside>
-
-      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
     </>
   );
 }

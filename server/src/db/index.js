@@ -193,12 +193,26 @@ function initDb() {
     console.log('✅ Migrated: added archived_at to tasks');
   }
 
-  // Migration: add archived_at to columns table
+  // Migration: add archived_at and is_protected to columns table
   const colTableCols = db.prepare('PRAGMA table_info(columns)').all().map(c => c.name);
   if (!colTableCols.includes('archived_at')) {
     db.exec('ALTER TABLE columns ADD COLUMN archived_at DATETIME');
     console.log('✅ Migrated: added archived_at to columns');
   }
+  if (!colTableCols.includes('is_protected')) {
+    db.exec('ALTER TABLE columns ADD COLUMN is_protected INTEGER DEFAULT 0');
+    console.log('✅ Migrated: added is_protected to columns');
+  }
+
+  // Mark the 5 core columns as protected
+  db.prepare(
+    `UPDATE columns SET is_protected = 1 WHERE id IN ('col_backlog','col_inprogress','col_testing','col_humanaction','col_done')`
+  ).run();
+
+  // Archive Human Review — it overlaps with Human Action
+  db.prepare(
+    `UPDATE columns SET archived_at = CURRENT_TIMESTAMP WHERE id = 'col_humanreview' AND archived_at IS NULL`
+  ).run();
 
   // Migration: add columns if missing (existing DBs)
   const agentCols = db.prepare('PRAGMA table_info(agents)').all();
@@ -272,14 +286,13 @@ function initDb() {
   // Seed default columns if empty
   const colCount = db.prepare('SELECT COUNT(*) as c FROM columns').get();
   if (colCount.c === 0) {
-    const insertCol = db.prepare('INSERT INTO columns (id, name, position, color) VALUES (?, ?, ?, ?)');
+    const insertCol = db.prepare('INSERT INTO columns (id, name, position, color, is_protected) VALUES (?, ?, ?, ?, ?)');
     const cols = [
-      ['col_backlog',      'Backlog',       0, '#64748b'],
-      ['col_inprogress',   'In Progress',   1, '#3b82f6'],
-      ['col_testing',      'Testing',       2, '#8b5cf6'],
-      ['col_humanaction',  'Human Action',  3, '#f59e0b'],
-      ['col_humanreview',  'Human Review',  4, '#ec4899'],
-      ['col_done',         'Done',          5, '#10b981'],
+      ['col_backlog',     'Backlog',      0, '#64748b', 1],
+      ['col_inprogress',  'In Progress',  1, '#3b82f6', 1],
+      ['col_testing',     'Testing',      2, '#8b5cf6', 1],
+      ['col_humanaction', 'Human Action', 3, '#f59e0b', 1],
+      ['col_done',        'Done',         4, '#10b981', 1],
     ];
     cols.forEach(c => insertCol.run(...c));
     console.log('✅ Default columns seeded');

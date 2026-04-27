@@ -9,15 +9,15 @@ export default {
       },
       colors: {
         surface: {
-          0: '#0a0a0f',
-          1: '#111118',
-          2: '#18181f',
-          3: '#1f1f28',
-          4: '#2a2a36',
+          0: 'rgb(var(--surface-0) / <alpha-value>)',
+          1: 'rgb(var(--surface-1) / <alpha-value>)',
+          2: 'rgb(var(--surface-2) / <alpha-value>)',
+          3: 'rgb(var(--surface-3) / <alpha-value>)',
+          4: 'rgb(var(--surface-4) / <alpha-value>)',
         },
-        border: '#2e2e3e',
+        border: 'rgb(var(--color-border) / <alpha-value>)',
         accent: {
-          DEFAULT: '#7c6af7',
+          DEFAULT: 'rgb(var(--accent) / <alpha-value>)',
           dim: '#5b4fd4',
           glow: 'rgba(124,106,247,0.15)',
         }

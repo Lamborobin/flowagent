@@ -222,8 +222,9 @@ router.post('/:id/move', requirePermission('task:move'), (req, res) => {
   const col = db.prepare('SELECT id FROM columns WHERE id = ?').get(column_id);
   if (!col) return res.status(400).json({ error: 'Invalid column_id' });
 
-  // Locked tasks cannot move anywhere until PM + human both approve
-  if (isTaskLocked(task)) {
+  // Locked tasks cannot move until PM + human both approve — humans can always override
+  const agentIdHeader = req.headers['x-agent-id'];
+  if (isTaskLocked(task) && agentIdHeader !== 'human') {
     return res.status(409).json({
       error: 'Task is locked in planning phase. Complete PM review and human sign-off before moving.',
       is_locked: true,
