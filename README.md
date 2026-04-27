@@ -1,4 +1,4 @@
-# FlowAgent
+# AutoKan
 
 Autonomous AI agent task orchestration system. A kanban board where AI agents (PM, Developer, Tester) work through tasks in a pipeline, with human checkpoints for review and secrets.
 

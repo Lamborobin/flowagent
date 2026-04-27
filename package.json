@@ -1,5 +1,5 @@
 {
-  "name": "flowagent",
+  "name": "autokan",
   "version": "0.1.0",
   "description": "Autonomous AI agent task orchestration system",
   "private": true,

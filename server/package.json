@@ -1,7 +1,7 @@
 {
-  "name": "flowagent-server",
+  "name": "autokan-server",
   "version": "0.1.0",
-  "description": "FlowAgent backend API",
+  "description": "AutoKan backend API",
   "main": "src/index.js",
   "scripts": {
     "dev": "nodemon src/index.js",

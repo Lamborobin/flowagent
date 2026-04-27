@@ -1,9 +1,9 @@
 # Client Context
 
-This file describes who is using FlowAgent and what they care about. Use this when planning tasks to ensure the work aligns with real client needs and priorities.
+This file describes who is using AutoKan and what they care about. Use this when planning tasks to ensure the work aligns with real client needs and priorities.
 
 ## About the Client
-FlowAgent is currently being developed for internal use and as a platform product. The primary user is a technical founder / solo developer who:
+AutoKan is currently being developed for internal use and as a platform product. The primary user is a technical founder / solo developer who:
 - Manages their own software projects
 - Wants AI agents to reduce repetitive development tasks
 - Stays hands-on at key decision points (approvals, secrets, final review)
