@@ -1,6 +1,6 @@
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { AlertTriangle, Clock, User, ChevronRight } from 'lucide-react';
+import { AlertTriangle, Clock, Lock } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { useStore } from '../store';
 
@@ -13,7 +13,12 @@ const PRIORITY_STYLES = {
 
 export default function TaskCard({ task }) {
   const { agents, setSelectedTask } = useStore();
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: task.id });
+  const isLocked = task.is_locked;
+
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: task.id,
+    disabled: isLocked,
+  });
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -29,12 +34,22 @@ export default function TaskCard({ task }) {
       ref={setNodeRef}
       style={style}
       {...attributes}
-      {...listeners}
+      {...(isLocked ? {} : listeners)}
       onClick={() => setSelectedTask(task)}
-      className="group bg-surface-2 border border-border rounded-xl p-3.5 cursor-pointer
-                 hover:border-accent/40 hover:bg-surface-3 transition-all duration-150
-                 animate-slide-in select-none"
+      className={`group relative bg-surface-2 border rounded-xl p-3.5 transition-all duration-150 animate-slide-in select-none
+        ${isLocked
+          ? 'border-amber-500/25 cursor-pointer'
+          : 'border-border cursor-grab hover:border-accent/40 hover:bg-surface-3'
+        }`}
     >
+      {/* Lock banner */}
+      {isLocked && (
+        <div className="flex items-center gap-1.5 mb-2.5 px-2 py-1 bg-amber-500/10 border border-amber-500/20 rounded-lg">
+          <Lock size={9} className="text-amber-400 shrink-0" />
+          <span className="text-[10px] font-medium text-amber-400">Locked · Planning phase</span>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-start justify-between gap-2 mb-2">
         <span className="text-sm font-medium text-gray-100 leading-snug line-clamp-2 flex-1">
@@ -104,12 +119,10 @@ export default function TaskCard({ task }) {
           )}
           <span className="flex items-center gap-1">
             <Clock size={10} />
-            {formatDistanceToNow(new Date(task.created_at), { addSuffix: true })}
+            {formatDistanceToNow(new Date(task.created_at.replace(' ', 'T') + 'Z'), { addSuffix: true })}
           </span>
         </div>
       </div>
-
-      <ChevronRight size={12} className="absolute right-3 bottom-3 text-gray-700 opacity-0 group-hover:opacity-100 transition-opacity" />
     </div>
   );
 }

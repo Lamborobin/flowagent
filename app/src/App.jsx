@@ -8,10 +8,12 @@ import TaskCard from './components/TaskCard';
 import TaskDetail from './components/TaskDetail';
 import NewTaskModal from './components/NewTaskModal';
 import NewAgentModal from './components/NewAgentModal';
+import EditAgentModal from './components/EditAgentModal';
+import TemplatesModal from './components/TemplatesModal';
 import { useState } from 'react';
 
 export default function App() {
-  const { columns, tasks, loading, load, moveTask, selectedTask, showNewTask, showNewAgent, setShowNewTask } = useStore();
+  const { columns, tasks, loading, load, moveTask, selectedTask, showNewTask, showNewAgent, showTemplates, editingAgent, setShowNewTask } = useStore();
   const [dragging, setDragging] = useState(null);
 
   const sensors = useSensors(
@@ -92,6 +94,8 @@ export default function App() {
       {/* Modals */}
       {showNewTask && <NewTaskModal />}
       {showNewAgent && <NewAgentModal />}
+      {editingAgent && <EditAgentModal />}
+      {showTemplates && <TemplatesModal />}
     </div>
   );
 }
