@@ -1,13 +1,32 @@
-export default function Header({ cartCount = 0 }) {
+export default function Header({ cartCount = 0, activeCategory, onNavigate }) {
+  const navItems = [
+    { label: 'Women', category: 'Clothing', filter: (p) => p.tags?.includes('women') },
+    { label: 'Men', category: 'Clothing', filter: (p) => p.tags?.includes('men') },
+    { label: 'Accessories', category: 'Accessories' },
+    { label: 'Sports', category: 'Sports' },
+  ]
+
   return (
     <header className="border-b border-gray-100 sticky top-0 bg-white z-10">
       <div className="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between">
-        <span className="text-lg font-medium tracking-widest uppercase">Velour</span>
+        <button 
+          onClick={() => onNavigate('All')} 
+          className="text-lg font-medium tracking-widest uppercase hover:opacity-70 transition-opacity"
+        >
+          Velour
+        </button>
         <nav className="hidden md:flex gap-8 text-sm text-gray-500">
-          <a href="#" className="hover:text-gray-900">Women</a>
-          <a href="#" className="hover:text-gray-900">Men</a>
-          <a href="#" className="hover:text-gray-900">Accessories</a>
-          <a href="#" className="hover:text-gray-900">Sports</a>
+          {navItems.map(({ label, category }) => (
+            <button
+              key={label}
+              onClick={() => onNavigate(category)}
+              className={`hover:text-gray-900 transition-colors ${
+                activeCategory === category ? 'text-gray-900 font-medium' : ''
+              }`}
+            >
+              {label}
+            </button>
+          ))}
         </nav>
         <button className="text-sm relative">
           Bag
@@ -18,6 +37,21 @@ export default function Header({ cartCount = 0 }) {
           )}
         </button>
       </div>
+
+      {/* Mobile navigation */}
+      <nav className="md:hidden flex justify-around border-t border-gray-100 text-xs text-gray-500 py-3">
+        {navItems.map(({ label, category }) => (
+          <button
+            key={label}
+            onClick={() => onNavigate(category)}
+            className={`hover:text-gray-900 transition-colors ${
+              activeCategory === category ? 'text-gray-900 font-medium' : ''
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
     </header>
   )
 }
