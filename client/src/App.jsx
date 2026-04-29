@@ -21,14 +21,46 @@ export default function App() {
 
   const cartCount = cart.reduce((sum, i) => sum + i.qty, 0)
 
+  // Get page title and description based on category
+  const getPageInfo = () => {
+    switch (activeCategory) {
+      case 'Sports':
+        return {
+          title: 'Sports',
+          description: 'Premium tennis equipment',
+        }
+      case 'Clothing':
+        return {
+          title: 'Clothing',
+          description: 'Premium clothing',
+        }
+      case 'Accessories':
+        return {
+          title: 'Accessories',
+          description: 'Premium accessories',
+        }
+      default:
+        return {
+          title: 'New In',
+          description: 'Premium clothing and accessories',
+        }
+    }
+  }
+
+  const pageInfo = getPageInfo()
+
   return (
     <div className="min-h-screen font-sans">
-      <Header cartCount={cartCount} />
+      <Header 
+        cartCount={cartCount} 
+        activeCategory={activeCategory}
+        onNavigate={setActiveCategory}
+      />
 
       <main className="max-w-6xl mx-auto px-4 py-10">
         <div className="mb-8">
-          <h1 className="text-2xl font-light tracking-wide mb-1">New In</h1>
-          <p className="text-sm text-gray-400">Premium clothing and accessories</p>
+          <h1 className="text-2xl font-light tracking-wide mb-1">{pageInfo.title}</h1>
+          <p className="text-sm text-gray-400">{pageInfo.description}</p>
         </div>
 
         <div className="flex gap-6 mb-8 text-sm border-b border-gray-100 pb-4">
