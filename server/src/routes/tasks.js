@@ -76,6 +76,7 @@ router.post('/', requirePermission('task:create'), (req, res) => {
   const {
     title, description, acceptance_criteria, column_id = 'col_backlog',
     assigned_agent_id, priority = 'medium', complexity = 'medium',
+    auto_complete = 0,
     tags = [], metadata = {}
   } = req.body;
 
@@ -94,10 +95,10 @@ router.post('/', requirePermission('task:create'), (req, res) => {
   }
 
   db.prepare(`
-    INSERT INTO tasks (id, title, description, acceptance_criteria, column_id, assigned_agent_id, priority, complexity, tags, metadata, pm_approval_status)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO tasks (id, title, description, acceptance_criteria, column_id, assigned_agent_id, priority, complexity, auto_complete, tags, metadata, pm_approval_status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(id, title, description, acceptance_criteria || null, column_id, assigned_agent_id || null, priority, complexity,
-    JSON.stringify(tags), JSON.stringify(metadata), pmReviewStatus);
+    auto_complete ? 1 : 0, JSON.stringify(tags), JSON.stringify(metadata), pmReviewStatus);
 
   // Log it
   const agentId = req.agent && db.prepare('SELECT id FROM agents WHERE id = ?').get(req.agent.id) ? req.agent.id : null;
@@ -159,12 +160,13 @@ router.patch('/:id', requirePermission('task:update'), (req, res) => {
 
   // PM/human can update everything (when not locked, or when human overrides)
   if (hasFullUpdate) {
-    const { title, description, acceptance_criteria, priority, complexity, tags, metadata, assigned_agent_id, recommended_model } = req.body;
+    const { title, description, acceptance_criteria, priority, complexity, auto_complete, tags, metadata, assigned_agent_id, recommended_model } = req.body;
     if (title !== undefined) allowed.title = title;
     if (description !== undefined) allowed.description = description;
     if (acceptance_criteria !== undefined) allowed.acceptance_criteria = acceptance_criteria;
     if (priority !== undefined) allowed.priority = priority;
     if (complexity !== undefined) allowed.complexity = complexity;
+    if (auto_complete !== undefined) allowed.auto_complete = auto_complete ? 1 : 0;
     if (tags !== undefined) allowed.tags = JSON.stringify(tags);
     if (metadata !== undefined) allowed.metadata = JSON.stringify(metadata);
     if (assigned_agent_id !== undefined) allowed.assigned_agent_id = assigned_agent_id;
@@ -318,6 +320,24 @@ router.post('/:id/request_human', requirePermission('task:request_human'), (req,
     .run(uuidv4(), task.id, agentId, 'human_action_requested', fromColumn, 'col_humanaction', reason || 'Human action required');
 
   res.json({ ok: true, message: 'Task flagged for human action' });
+});
+
+// POST /tasks/:id/approve_pr — human approves the PR, moves task to Testing
+router.post('/:id/approve_pr', requirePermission('task:approve'), (req, res) => {
+  const db = getDb();
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+  if (task.column_id !== 'col_humanaction') return res.status(400).json({ error: 'Task is not in Human Action' });
+  if (!task.pr_url) return res.status(400).json({ error: 'No PR URL on this task' });
+
+  db.prepare(`UPDATE tasks SET column_id = 'col_testing', requires_human_action = 0, human_action_reason = NULL WHERE id = ?`)
+    .run(task.id);
+
+  db.prepare(`INSERT INTO task_logs (id, task_id, agent_id, action, from_column, to_column, message) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    .run(uuidv4(), task.id, 'human', 'pr_approved', 'col_humanaction', 'col_testing', `PR approved, moved to Testing`);
+
+  const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id);
+  res.json({ ...updated, tags: JSON.parse(updated.tags), metadata: JSON.parse(updated.metadata) });
 });
 
 // POST /tasks/:id/pm_question — PM posts a clarifying question

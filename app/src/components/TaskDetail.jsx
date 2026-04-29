@@ -3,6 +3,7 @@ import { X, Trash2, ArrowRight, Clock, Tag, Activity, Lock, Unlock, Archive, Plu
 import { formatDistanceToNow } from 'date-fns';
 import { useStore } from '../store';
 import { tasksApi } from '../api';
+import MarkdownText from './MarkdownText';
 
 const PRIORITY_COLORS = {
   critical: '#ef4444', high: '#f97316', medium: '#3b82f6', low: '#6b7280'
@@ -34,6 +35,7 @@ export default function TaskDetail() {
   const [confirmBypass, setConfirmBypass] = useState(false);
   const [confirmArchive, setConfirmArchive] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [approvingPr, setApprovingPr] = useState(false);
 
   const titleRef = useRef(null);
   const descRef = useRef(null);
@@ -243,6 +245,16 @@ export default function TaskDetail() {
     setApprovingHuman(false);
   }
 
+  async function handleApprovePr() {
+    setApprovingPr(true);
+    try {
+      const updated = await tasksApi.approvePr(task.id);
+      setTask(updated);
+    } finally {
+      setApprovingPr(false);
+    }
+  }
+
   async function handleAgentChange(agentId) {
     await updateTask(task.id, { assigned_agent_id: agentId || null });
     setTask(t => ({ ...t, assigned_agent_id: agentId || null }));
@@ -317,8 +329,36 @@ export default function TaskDetail() {
               </div>
             )}
 
-            {/* Human action notice */}
-            {task.requires_human_action === 1 && (
+            {/* PR Review panel */}
+            {task.pr_url && task.column_id === 'col_humanaction' && (
+              <div className="rounded-xl border border-blue-500/25 bg-blue-500/5 overflow-hidden">
+                <div className="flex items-center gap-2 px-4 py-2.5 border-b border-blue-500/15">
+                  <div className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+                  <span className="text-xs font-medium text-blue-300">PR Ready for Review</span>
+                </div>
+                <div className="px-4 py-3 space-y-3">
+                  <a
+                    href={task.pr_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 text-xs text-blue-400 hover:text-blue-300 underline underline-offset-2 break-all transition-colors"
+                  >
+                    {task.pr_url}
+                  </a>
+                  <p className="text-xs text-gray-500">Review the PR, then click below to move this task to Testing.</p>
+                  <button
+                    onClick={handleApprovePr}
+                    disabled={approvingPr}
+                    className="w-full py-2 text-xs font-medium bg-blue-600/20 text-blue-300 rounded-lg hover:bg-blue-600/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {approvingPr ? 'Moving…' : 'PR Reviewed — Send to Testing'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Human action notice (non-PR blocks) */}
+            {task.requires_human_action === 1 && !task.pr_url && (
               <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3">
                 <p className="text-xs font-medium text-amber-400 mb-1">Human Action Required</p>
                 <p className="text-xs text-amber-300/70">{task.human_action_reason}</p>
@@ -341,7 +381,7 @@ export default function TaskDetail() {
                   </button>
                 </div>
                 <div className="px-4 py-3">
-                  <p className="text-xs text-gray-300 leading-relaxed whitespace-pre-wrap">{task.pm_review_comment}</p>
+                  <MarkdownText text={task.pm_review_comment} className="text-xs text-gray-300 leading-relaxed" />
                 </div>
                 {/* Planning history accordion */}
                 {showPlanningHistory && (
@@ -377,7 +417,10 @@ export default function TaskDetail() {
                                 isDone ? 'bg-green-500/8 text-green-400' :
                                 'bg-surface-3 text-gray-400'
                               }`}>
-                                {log.message}
+                                {(isPM || isDone)
+                                  ? <MarkdownText text={log.message} />
+                                  : <p className="whitespace-pre-wrap">{log.message}</p>
+                                }
                               </div>
                             </div>
                           );
@@ -482,7 +525,10 @@ export default function TaskDetail() {
                             isDone ? 'bg-green-500/10 text-green-300 border border-green-500/20' :
                             'bg-surface-3 text-gray-300'
                           }`}>
-                            {log.message}
+                            {(isPM || isDone)
+                              ? <MarkdownText text={log.message} />
+                              : <p className="whitespace-pre-wrap">{log.message}</p>
+                            }
                           </div>
                         </div>
                       );
@@ -506,9 +552,9 @@ export default function TaskDetail() {
                     {/* Current PM question — shown here since it's sliced from the thread above */}
                     <div className="flex gap-2">
                       <div className="w-5 h-5 rounded-full bg-purple-600 flex items-center justify-center text-[9px] font-bold text-white shrink-0 mt-0.5">PM</div>
-                      <p className="flex-1 text-xs text-purple-200 bg-purple-500/10 border border-purple-500/20 rounded-lg px-3 py-2 leading-relaxed whitespace-pre-wrap">
-                        {task.pm_pending_question}
-                      </p>
+                      <div className="flex-1 text-xs text-purple-200 bg-purple-500/10 border border-purple-500/20 rounded-lg px-3 py-2 leading-relaxed">
+                        <MarkdownText text={task.pm_pending_question} />
+                      </div>
                     </div>
                     <div className="flex gap-2 pl-7">
                       <textarea
@@ -537,7 +583,7 @@ export default function TaskDetail() {
                     {task.pm_review_comment && (
                       <div className="bg-surface-2 rounded-lg p-3">
                         <p className="text-[10px] text-gray-600 font-medium uppercase tracking-wide mb-1.5">Requirements</p>
-                        <p className="text-xs text-gray-300 leading-relaxed whitespace-pre-wrap">{task.pm_review_comment}</p>
+                        <MarkdownText text={task.pm_review_comment} className="text-xs text-gray-300 leading-relaxed" />
                       </div>
                     )}
                     {!approvingHuman ? (
@@ -697,6 +743,27 @@ export default function TaskDetail() {
               </div>
             </div>
 
+            {/* Auto-complete toggle */}
+            <div
+              className="flex items-center justify-between bg-surface-2 rounded-lg px-3 py-2.5 cursor-pointer hover:bg-surface-3/60 transition-colors"
+              onClick={() => {
+                const next = task.auto_complete ? 0 : 1;
+                updateTask(task.id, { auto_complete: next });
+                setTask(t => ({ ...t, auto_complete: next }));
+              }}
+            >
+              <div>
+                <p className="text-xs font-medium text-gray-300">Auto-complete</p>
+                <p className="text-[10px] text-gray-600 mt-0.5">
+                  {task.auto_complete ? 'PR will be merged automatically → Testing' : 'PR sent to Human Action for your review'}
+                </p>
+              </div>
+              <div className={`w-8 h-4.5 rounded-full transition-colors relative shrink-0 ml-3 ${task.auto_complete ? 'bg-accent' : 'bg-surface-4'}`}
+                   style={{ height: '18px', width: '32px' }}>
+                <div className={`absolute top-0.5 w-3.5 h-3.5 rounded-full bg-white shadow transition-transform ${task.auto_complete ? 'translate-x-[14px]' : 'translate-x-0.5'}`} />
+              </div>
+            </div>
+
             {/* Assigned agent */}
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1.5">Assigned Agent</label>
@@ -753,17 +820,41 @@ export default function TaskDetail() {
             <div className="border-t border-border p-5">
               <p className="text-xs text-gray-600 mb-3 flex items-center gap-1"><Activity size={10} />Activity</p>
               <div className="space-y-2.5">
-                {logs.map(log => (
-                  <div key={log.id} className="flex gap-2.5">
-                    <div className="w-1.5 h-1.5 rounded-full bg-surface-4 mt-1.5 shrink-0" />
-                    <div>
-                      <p className="text-xs text-gray-400">{log.message}</p>
-                      <p className="text-[10px] text-gray-700 mt-0.5">
-                        {log.agent_name || 'System'} · {formatDistanceToNow(new Date(log.created_at.replace(' ', 'T') + 'Z'), { addSuffix: true })}
-                      </p>
+                {logs.map(log => {
+                  const label = (() => {
+                    switch (log.action) {
+                      case 'created': return 'Task created';
+                      case 'pm_question': return 'PM asked a clarifying question';
+                      case 'human_answer': return 'You replied';
+                      case 'pm_reviewed': return 'PM approved the task';
+                      case 'pm_review_requested': return 'PM review requested';
+                      case 'human_approved': return `Human approved${log.message && log.message.replace(/^Human approved\s*[-–]?\s*/, '') ? ' — ' + log.message.replace(/^Human approved\s*[-–]?\s*/, '') : ''}`;
+                      case 'human_rejected': return 'Human rejected';
+                      case 'moved': return log.message || 'Moved';
+                      case 'updated': return 'Task updated';
+                      case 'developer_assigned': return 'Developer assigned';
+                      case 'branch_created': return log.message || 'Branch created';
+                      case 'pr_created': return 'PR created — awaiting review';
+                      case 'pr_approved': return 'PR approved, moved to Testing';
+                      case 'human_action_requested': return 'Human action required';
+                      default: {
+                        const msg = log.message || log.action;
+                        return msg.length > 80 ? msg.slice(0, 80) + '…' : msg;
+                      }
+                    }
+                  })();
+                  return (
+                    <div key={log.id} className="flex gap-2.5">
+                      <div className="w-1.5 h-1.5 rounded-full bg-surface-4 mt-1.5 shrink-0" />
+                      <div>
+                        <p className="text-xs text-gray-400">{label}</p>
+                        <p className="text-[10px] text-gray-700 mt-0.5">
+                          {log.agent_name || 'System'} · {formatDistanceToNow(new Date(log.created_at.replace(' ', 'T') + 'Z'), { addSuffix: true })}
+                        </p>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}

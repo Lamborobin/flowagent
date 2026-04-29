@@ -184,6 +184,14 @@ function initDb() {
 
   // Migration: tasks table new columns
   const taskCols = db.prepare('PRAGMA table_info(tasks)').all().map(c => c.name);
+  if (!taskCols.includes('pr_url')) {
+    db.exec('ALTER TABLE tasks ADD COLUMN pr_url TEXT');
+    console.log('✅ Migrated: added pr_url to tasks');
+  }
+  if (!taskCols.includes('auto_complete')) {
+    db.exec('ALTER TABLE tasks ADD COLUMN auto_complete INTEGER DEFAULT 0');
+    console.log('✅ Migrated: added auto_complete to tasks');
+  }
   if (!taskCols.includes('acceptance_criteria')) {
     db.exec('ALTER TABLE tasks ADD COLUMN acceptance_criteria TEXT');
     console.log('✅ Migrated: added acceptance_criteria to tasks');

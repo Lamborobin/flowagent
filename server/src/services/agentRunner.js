@@ -1,6 +1,7 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const fs = require('fs');
 const path = require('path');
+const https = require('https');
 const { v4: uuidv4 } = require('uuid');
 const { exec } = require('child_process');
 const util = require('util');
@@ -9,6 +10,83 @@ const { getDb } = require('../db');
 const execAsync = util.promisify(exec);
 
 const PROJECT_ROOT = path.join(__dirname, '../../..');
+
+// ---------------------------------------------------------------------------
+// GitHub PR creation (no gh CLI required — uses token from env or git remote)
+// ---------------------------------------------------------------------------
+
+function getGithubToken() {
+  if (process.env.GITHUB_TOKEN) return process.env.GITHUB_TOKEN;
+  try {
+    const remote = require('child_process')
+      .execSync('git remote get-url origin', { cwd: PROJECT_ROOT }).toString().trim();
+    const match = remote.match(/https:\/\/[^:]+:([^@]+)@github\.com/);
+    return match ? match[1] : null;
+  } catch { return null; }
+}
+
+function getGithubRepoInfo() {
+  try {
+    const remote = require('child_process')
+      .execSync('git remote get-url origin', { cwd: PROJECT_ROOT }).toString().trim();
+    const match = remote.match(/github\.com[/:]([^/]+)\/(.+?)(?:\.git)?$/);
+    return match ? { owner: match[1], repo: match[2] } : null;
+  } catch { return null; }
+}
+
+function githubRequest({ path, method = 'GET', body = null }) {
+  const token = getGithubToken();
+  const repoInfo = getGithubRepoInfo();
+  if (!token || !repoInfo) return Promise.resolve(null);
+
+  const payload = body ? JSON.stringify(body) : null;
+  const headers = {
+    'Authorization': `token ${token}`,
+    'User-Agent': 'flowagent-dev-runner',
+    'Accept': 'application/vnd.github.v3+json',
+  };
+  if (payload) {
+    headers['Content-Type'] = 'application/json';
+    headers['Content-Length'] = Buffer.byteLength(payload);
+  }
+
+  return new Promise((resolve) => {
+    const req = https.request({
+      hostname: 'api.github.com',
+      path: path.replace('{owner}', repoInfo.owner).replace('{repo}', repoInfo.repo),
+      method,
+      headers,
+    }, (res) => {
+      let data = '';
+      res.on('data', chunk => { data += chunk; });
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); } catch { resolve(null); }
+      });
+    });
+    req.on('error', () => resolve(null));
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
+async function createGithubPr({ title, body, head, base = 'master' }) {
+  const json = await githubRequest({
+    path: '/repos/{owner}/{repo}/pulls',
+    method: 'POST',
+    body: { title, body, head, base },
+  });
+  if (!json || !json.html_url) return null;
+  return { url: json.html_url, number: json.number };
+}
+
+async function mergeGithubPr(prNumber) {
+  const json = await githubRequest({
+    path: `/repos/{owner}/{repo}/pulls/${prNumber}/merge`,
+    method: 'PUT',
+    body: { merge_method: 'merge' },
+  });
+  return json && (json.merged === true || json.sha);
+}
 
 // Global codebase files — loaded for technical agents (dev, tester) but NOT for PM.
 // A PM understands client priorities and product decisions, not the codebase.
@@ -68,6 +146,20 @@ const PM_TOOLS = [
         comment: {
           type: 'string',
           description: "A clear requirements summary written so both the client and developer can understand it. Structure it as: **What to build** (plain description of the feature), **Key decisions** (what was agreed during planning), **Done when** (concrete acceptance criteria). Keep it concise — 3-6 bullet points max."
+        },
+        acceptance_criteria: {
+          type: 'string',
+          description: "Concrete, testable acceptance scenarios derived from the Done-when bullets. Write as a bullet list — each item should be independently verifiable (e.g. '• Clicking Makeup in nav opens the category page with Lips, Eyes, Face subcategories'). These will be saved as the task's acceptance criteria for the tester."
+        },
+        priority: {
+          type: 'string',
+          enum: ['low', 'medium', 'high', 'critical'],
+          description: "Your assessment of how urgent this task is for the business. critical = blocks the product or revenue; high = important soon; medium = planned improvement; low = nice-to-have."
+        },
+        complexity: {
+          type: 'string',
+          enum: ['low', 'medium', 'high'],
+          description: "Your estimate of implementation effort/risk. low = simple isolated change; medium = touches multiple areas or has moderate risk; high = significant architectural change, cross-cutting concerns, or high uncertainty."
         },
         checklist: {
           type: 'array',
@@ -217,12 +309,25 @@ async function runPmAgent(taskId) {
       console.log(`[AgentRunner] PM asked question on task ${taskId}`);
 
     } else if (block.name === 'approve_task') {
-      const { comment, checklist = [] } = block.input;
+      const { comment, checklist = [], acceptance_criteria = '', priority, complexity } = block.input;
       const resolvedChecklist = checklist.map(i => ({ ...i, resolved: true }));
       db.prepare(`
         UPDATE tasks SET pm_approval_status = 'approved', pm_review_comment = ?, pm_review_date = CURRENT_TIMESTAMP, pm_checklist = ?
         WHERE id = ?
       `).run(comment, JSON.stringify(resolvedChecklist), taskId);
+      // Populate acceptance_criteria if the human hasn't already set one
+      if (acceptance_criteria && !task.acceptance_criteria) {
+        db.prepare(`UPDATE tasks SET acceptance_criteria = ? WHERE id = ?`).run(acceptance_criteria, taskId);
+      }
+      // Set priority and complexity from PM's assessment (only if PM provided them)
+      const validPriorities = ['low', 'medium', 'high', 'critical'];
+      const validComplexities = ['low', 'medium', 'high'];
+      if (priority && validPriorities.includes(priority)) {
+        db.prepare(`UPDATE tasks SET priority = ? WHERE id = ?`).run(priority, taskId);
+      }
+      if (complexity && validComplexities.includes(complexity)) {
+        db.prepare(`UPDATE tasks SET complexity = ? WHERE id = ?`).run(complexity, taskId);
+      }
       db.prepare(`INSERT INTO task_logs (id, task_id, agent_id, action, message) VALUES (?, ?, ?, ?, ?)`)
         .run(uuidv4(), taskId, 'agent_pm', 'pm_reviewed', `PM approved — ${comment}`);
       console.log(`[AgentRunner] PM approved task ${taskId}`);
@@ -306,11 +411,11 @@ const DEV_TOOLS = [
   },
   {
     name: 'task_complete',
-    description: 'Mark implementation done and move task to Testing. Call this after the PR is merged to master.',
+    description: 'Call this after pushing the branch. The server will create the PR automatically and move the task to Human Action for review.',
     input_schema: {
       type: 'object',
       properties: {
-        summary: { type: 'string', description: 'Summary of what was implemented, files changed, and PR URL' }
+        summary: { type: 'string', description: 'Brief summary of what was implemented and which files changed' }
       },
       required: ['summary']
     }
@@ -328,7 +433,18 @@ const DEV_TOOLS = [
   }
 ];
 
+const BASH_FORBIDDEN = [
+  { pattern: /git\s+merge\b/, reason: 'Merging branches is not allowed — the server handles PR merging.' },
+  { pattern: /git\s+push\b(?!.*feature\/)/, reason: 'Only pushing to feature/* branches is allowed.' },
+  { pattern: /git\s+push\s+.*\b(master|main)\b/, reason: 'Pushing directly to master/main is not allowed.' },
+];
+
 async function runBash(command) {
+  for (const { pattern, reason } of BASH_FORBIDDEN) {
+    if (pattern.test(command)) {
+      return { success: false, output: `BLOCKED: ${reason}` };
+    }
+  }
   try {
     const { stdout, stderr } = await execAsync(command, {
       cwd: PROJECT_ROOT,
@@ -379,14 +495,13 @@ async function runDevAgent(taskId) {
     `Priority: ${task.priority} | Complexity: ${task.complexity}`,
     ``,
     `## Instructions`,
-    `Work through the git workflow described in your role:`,
-    `1. git checkout -b feature/${task.id}`,
+    `Work through this git workflow exactly — do not deviate:`,
+    `1. git checkout -b feature/${task.id}  (or git checkout feature/${task.id} if it already exists)`,
     `2. Implement changes inside client/ only`,
-    `3. git add, git commit -m "[${task.id}] ${task.title}"`,
+    `3. git add -A && git commit -m "[${task.id}] ${task.title}"`,
     `4. git push -u origin feature/${task.id}`,
-    `5. gh pr create --base master --title "[${task.id}] ${task.title}" --body "..."`,
-    `6. gh pr merge --merge --auto (or wait for auto-merge if configured)`,
-    `7. Call task_complete with a summary and the PR URL`,
+    `5. Call task_complete with a brief summary`,
+    `IMPORTANT: Do NOT merge branches. Do NOT push to master. Do NOT run gh commands. The server handles PR creation automatically when you call task_complete.`,
     `Use task_log at each milestone (25%, 50%, 75%). If you hit a blocker, call request_human.`
   ].filter(Boolean).join('\n');
 
@@ -446,15 +561,38 @@ async function runDevAgent(taskId) {
 
       } else if (block.name === 'task_complete') {
         const { summary } = block.input;
-        db.prepare('UPDATE tasks SET progress = 100, column_id = ? WHERE id = ?')
-          .run('col_testing', taskId);
-        db.prepare(`INSERT INTO task_logs (id, task_id, agent_id, action, message) VALUES (?, ?, ?, ?, ?)`)
-          .run(uuidv4(), taskId, 'agent_dev', 'note', `Implementation complete: ${summary}`);
-        db.prepare(`INSERT INTO task_logs (id, task_id, agent_id, action, message) VALUES (?, ?, ?, ?, ?)`)
-          .run(uuidv4(), taskId, 'agent_dev', 'moved', 'Task moved to Testing');
-        console.log(`[AgentRunner][dev][${taskId}] complete`);
+        const prBody = `## Summary\n${summary}\n\n## Task\n${task.title}\n\n${task.acceptance_criteria ? `## Acceptance Criteria\n${task.acceptance_criteria}` : ''}`.trim();
+        const pr = await createGithubPr({
+          title: `[${taskId}] ${task.title}`,
+          body: prBody,
+          head: `feature/${taskId}`,
+        });
+        const pr_url = pr ? pr.url : '';
+
+        if (task.auto_complete && pr) {
+          // Auto-complete: merge PR immediately, move straight to Testing
+          const merged = await mergeGithubPr(pr.number);
+          const targetCol = merged ? 'col_testing' : 'col_humanaction';
+          const reason = merged ? null : 'Auto-merge failed — please review and merge manually';
+          db.prepare('UPDATE tasks SET progress = 100, column_id = ?, pr_url = ?, requires_human_action = ?, human_action_reason = ? WHERE id = ?')
+            .run(targetCol, pr_url, merged ? 0 : 1, reason, taskId);
+          db.prepare(`INSERT INTO task_logs (id, task_id, agent_id, action, message) VALUES (?, ?, ?, ?, ?)`)
+            .run(uuidv4(), taskId, 'agent_dev', 'pr_created', `PR created and ${merged ? 'auto-merged' : 'merge failed'}: ${pr_url}`);
+          db.prepare(`INSERT INTO task_logs (id, task_id, agent_id, action, from_column, to_column, message) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+            .run(uuidv4(), taskId, 'agent_dev', 'moved', 'col_inprogress', targetCol, merged ? 'Auto-completed — moved to Testing' : 'Auto-merge failed — moved to Human Action');
+          console.log(`[AgentRunner][dev][${taskId}] auto-complete. merged=${merged} PR: ${pr_url}`);
+        } else {
+          // Manual review: park in Human Action
+          db.prepare('UPDATE tasks SET progress = 100, column_id = ?, pr_url = ?, requires_human_action = 1, human_action_reason = ? WHERE id = ?')
+            .run('col_humanaction', pr_url, 'PR ready for review', taskId);
+          db.prepare(`INSERT INTO task_logs (id, task_id, agent_id, action, message) VALUES (?, ?, ?, ?, ?)`)
+            .run(uuidv4(), taskId, 'agent_dev', 'pr_created', pr_url ? `PR created: ${pr_url}` : `Branch pushed — PR creation failed, create manually`);
+          db.prepare(`INSERT INTO task_logs (id, task_id, agent_id, action, from_column, to_column, message) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+            .run(uuidv4(), taskId, 'agent_dev', 'moved', 'col_inprogress', 'col_humanaction', 'Moved to Human Action — awaiting PR review');
+          console.log(`[AgentRunner][dev][${taskId}] awaiting review. PR: ${pr_url || 'creation failed'}`);
+        }
         completed = true;
-        result = { success: true };
+        result = { success: true, pr_url };
 
       } else if (block.name === 'request_human') {
         const { reason } = block.input;

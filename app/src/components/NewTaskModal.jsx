@@ -9,7 +9,7 @@ export default function NewTaskModal() {
   const { agents, createTask, setShowNewTask } = useStore();
   const [form, setForm] = useState({
     title: '', description: '', priority: 'medium', complexity: 'medium',
-    assigned_agent_id: 'agent_pm', tags: '', acceptance_criteria: '',
+    assigned_agent_id: 'agent_pm', tags: '', acceptance_criteria: '', auto_complete: false,
   });
   const [saving, setSaving] = useState(false);
 
@@ -23,6 +23,7 @@ export default function NewTaskModal() {
       await createTask({
         ...form,
         acceptance_criteria: form.acceptance_criteria.trim() || undefined,
+        auto_complete: form.auto_complete ? 1 : 0,
         tags: form.tags ? form.tags.split(',').map(t => t.trim()).filter(Boolean) : [],
         assigned_agent_id: form.assigned_agent_id || undefined,
         column_id: 'col_backlog',
@@ -107,6 +108,22 @@ export default function NewTaskModal() {
                 <option key={a.id} value={a.id}>{a.name} ({a.role})</option>
               ))}
             </select>
+          </div>
+
+          <div
+            className="flex items-center justify-between bg-surface-3 rounded-lg px-3 py-2.5 cursor-pointer hover:bg-surface-3/80 transition-colors"
+            onClick={() => set('auto_complete', !form.auto_complete)}
+          >
+            <div>
+              <p className="text-xs font-medium text-gray-300">Auto-complete</p>
+              <p className="text-[10px] text-gray-500 mt-0.5">
+                {form.auto_complete ? 'PR merged automatically → Testing' : 'PR sent to Human Action for review'}
+              </p>
+            </div>
+            <div className={`rounded-full transition-colors shrink-0 ml-3 relative ${form.auto_complete ? 'bg-accent' : 'bg-surface-4'}`}
+                 style={{ width: '32px', height: '18px' }}>
+              <div className={`absolute top-0.5 w-3.5 h-3.5 rounded-full bg-white shadow transition-transform ${form.auto_complete ? 'translate-x-[14px]' : 'translate-x-0.5'}`} />
+            </div>
           </div>
 
           <div>
