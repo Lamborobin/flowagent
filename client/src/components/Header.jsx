@@ -7,6 +7,7 @@ export default function Header({ cartCount = 0 }) {
           <a href="#" className="hover:text-gray-900">Women</a>
           <a href="#" className="hover:text-gray-900">Men</a>
           <a href="#" className="hover:text-gray-900">Accessories</a>
+          <a href="#" className="hover:text-gray-900">Sports</a>
         </nav>
         <button className="text-sm relative">
           Bag
