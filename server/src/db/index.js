@@ -280,12 +280,15 @@ function initDb() {
     db.prepare("UPDATE agents SET prompt_file = ? WHERE id = ? AND prompt_file = ?").run(newPath, id, oldPath);
   }
 
-  // Migration: seed instruction_files for existing agents if still empty
-  const pmInstructions = JSON.stringify(['instructions/client.md', 'instructions/project.md']);
-  const devInstructions = JSON.stringify(['instructions/project.md']);
-  db.prepare("UPDATE agents SET instruction_files = ? WHERE id = 'agent_pm' AND (instruction_files IS NULL OR instruction_files = '[]')").run(pmInstructions);
-  db.prepare("UPDATE agents SET instruction_files = ? WHERE id = 'agent_dev' AND (instruction_files IS NULL OR instruction_files = '[]')").run(devInstructions);
-  db.prepare("UPDATE agents SET instruction_files = ? WHERE id = 'agent_test' AND (instruction_files IS NULL OR instruction_files = '[]')").run(devInstructions);
+  // Migration: enforce correct instruction_files per role (always apply — roles are fixed)
+  // PM: client context only. No codebase files — PM knows the client, not the code.
+  // Developer/Tester: project + client context. Codebase files (CLAUDE.md etc.) are
+  // injected by agentRunner based on role, so instruction_files = shared context only.
+  const pmInstructions = JSON.stringify(['instructions/client.md']);
+  const devInstructions = JSON.stringify(['instructions/project.md', 'instructions/client.md']);
+  db.prepare("UPDATE agents SET instruction_files = ? WHERE id = 'agent_pm'").run(pmInstructions);
+  db.prepare("UPDATE agents SET instruction_files = ? WHERE id = 'agent_dev'").run(devInstructions);
+  db.prepare("UPDATE agents SET instruction_files = ? WHERE id = 'agent_test'").run(devInstructions);
 
   // Seed default columns if empty
   const colCount = db.prepare('SELECT COUNT(*) as c FROM columns').get();
@@ -316,7 +319,7 @@ function initDb() {
         'Plans and manages tasks. Has a real planning conversation to ensure every task is clear before development starts.',
         JSON.stringify(['task:create','task:read','task:update','task:delete','task:move','task:assign']),
         'instructions/pm.md',
-        JSON.stringify(['instructions/client.md', 'instructions/project.md']),
+        JSON.stringify(['instructions/client.md']),   // PM: client context only, no codebase
         1, PM_TEMPLATE_SYSTEM_PROMPT,
         '#6366f1', 'tpl_pm'
       ],
@@ -326,7 +329,7 @@ function initDb() {
         'Implements features and fixes bugs. Creates feature branches, commits, and pushes work for testing.',
         JSON.stringify(['task:read','task:move','task:update:status','task:update:progress','task:log']),
         'instructions/developer.md',
-        JSON.stringify(['instructions/project.md']),
+        JSON.stringify(['instructions/project.md', 'instructions/client.md']), // dev: full context
         0, null,
         '#3b82f6', 'tpl_dev'
       ],
@@ -336,7 +339,7 @@ function initDb() {
         'Validates implementations and runs tests. Passes work to human review or sends back for fixes.',
         JSON.stringify(['task:read','task:move','task:update:status','task:update:progress','task:log','task:request_human']),
         'instructions/tester.md',
-        JSON.stringify(['instructions/project.md']),
+        JSON.stringify(['instructions/project.md', 'instructions/client.md']), // tester: full context
         0, null,
         '#8b5cf6', 'tpl_test'
       ],

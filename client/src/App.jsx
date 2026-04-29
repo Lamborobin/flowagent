@@ -1,0 +1,54 @@
+import { useState } from 'react'
+import Header from './components/Header'
+import ProductGrid from './components/ProductGrid'
+import { products as allProducts, categories } from './data/products'
+
+export default function App() {
+  const [activeCategory, setActiveCategory] = useState('All')
+  const [cart, setCart] = useState([])
+
+  const filtered = activeCategory === 'All'
+    ? allProducts
+    : allProducts.filter(p => p.category === activeCategory)
+
+  function addToCart(product) {
+    setCart(prev => {
+      const existing = prev.find(i => i.id === product.id)
+      if (existing) return prev.map(i => i.id === product.id ? { ...i, qty: i.qty + 1 } : i)
+      return [...prev, { ...product, qty: 1 }]
+    })
+  }
+
+  const cartCount = cart.reduce((sum, i) => sum + i.qty, 0)
+
+  return (
+    <div className="min-h-screen font-sans">
+      <Header cartCount={cartCount} />
+
+      <main className="max-w-6xl mx-auto px-4 py-10">
+        <div className="mb-8">
+          <h1 className="text-2xl font-light tracking-wide mb-1">New In</h1>
+          <p className="text-sm text-gray-400">Premium clothing and accessories</p>
+        </div>
+
+        <div className="flex gap-6 mb-8 text-sm border-b border-gray-100 pb-4">
+          {categories.map(cat => (
+            <button
+              key={cat}
+              onClick={() => setActiveCategory(cat)}
+              className={`pb-1 transition-colors ${
+                activeCategory === cat
+                  ? 'text-gray-900 border-b border-gray-900'
+                  : 'text-gray-400 hover:text-gray-700'
+              }`}
+            >
+              {cat}
+            </button>
+          ))}
+        </div>
+
+        <ProductGrid products={filtered} onAddToCart={addToCart} />
+      </main>
+    </div>
+  )
+}

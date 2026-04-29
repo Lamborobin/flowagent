@@ -2,12 +2,17 @@ const Anthropic = require('@anthropic-ai/sdk');
 const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
+const { exec } = require('child_process');
+const util = require('util');
 const { getDb } = require('../db');
+
+const execAsync = util.promisify(exec);
 
 const PROJECT_ROOT = path.join(__dirname, '../../..');
 
-// Global files always included for every agent
-const GLOBAL_FILES = ['CLAUDE.md', 'README.md'];
+// Global codebase files — loaded for technical agents (dev, tester) but NOT for PM.
+// A PM understands client priorities and product decisions, not the codebase.
+const CODEBASE_FILES = ['CLAUDE.md', 'README.md'];
 
 // Lazy-init so dotenv has time to load before we read the key
 let _client = null;
@@ -24,7 +29,10 @@ function getClient() {
 const CHECKLIST_ITEM_SCHEMA = {
   type: 'object',
   properties: {
-    item: { type: 'string', description: 'Short label for this requirement (e.g. "Acceptance criteria defined")' },
+    item: {
+      type: 'string',
+      description: 'A plain-language label for one decision or confirmation the client needs to make. Write from the client\'s perspective — what THEY need to decide, not what the developer will implement. Use simple language, no jargon. GOOD: "Should clicking Shoes open a product list or just a category page?" BAD: "Backend category exists or needs creation". GOOD: "Where should Shoes appear in the navigation?" BAD: "Menu placement specified (top-level or nested)". GOOD: "Should shoe products be shown right away or added later?" BAD: "Product data source confirmed". Never use meta/process labels like "Acceptance criteria defined" — instead ask the actual question that surfaces what done looks like.'
+    },
     resolved: { type: 'boolean', description: 'True if this requirement is now confirmed by the conversation' }
   },
   required: ['item', 'resolved']
@@ -34,17 +42,17 @@ const CHECKLIST_ITEM_SCHEMA = {
 const PM_TOOLS = [
   {
     name: 'ask_question',
-    description: 'Ask the human one focused clarifying question. Always provide the full checklist showing which items are now resolved. On first call, generate all checklist items. On subsequent calls, re-evaluate and mark resolved items — do not add new items unless truly necessary.',
+    description: 'Send a clarifying message to the human. On FIRST contact: ask ALL your open questions at once as a numbered list — this minimises round trips. On follow-up (human has already answered): ask at most ONE targeted question about anything still unclear. Always provide the updated checklist. Checklist items must be plain client-friendly decisions, not technical steps.',
     input_schema: {
       type: 'object',
       properties: {
         question: {
           type: 'string',
-          description: 'One specific, actionable question for the human.'
+          description: 'Your message to the human. On first contact write all questions as a numbered list: "1. ... 2. ... 3. ...". On follow-up write one focused question only.'
         },
         checklist: {
           type: 'array',
-          description: 'Full list of all planning requirements. Mark resolved: true for items confirmed by the conversation so far.',
+          description: 'Full list of all planning checklist items. Mark resolved: true for items confirmed so far.',
           items: CHECKLIST_ITEM_SCHEMA
         }
       },
@@ -53,13 +61,13 @@ const PM_TOOLS = [
   },
   {
     name: 'approve_task',
-    description: 'Approve the task when ALL checklist items are resolved and you are fully satisfied it is clear, scoped, and ready for a developer.',
+    description: 'Approve the task when ALL checklist items are resolved and you are fully satisfied it is ready for a developer.',
     input_schema: {
       type: 'object',
       properties: {
         comment: {
           type: 'string',
-          description: "A concise developer brief summarising what to build, any constraints agreed during planning, and what 'done' looks like."
+          description: "A clear requirements summary written so both the client and developer can understand it. Structure it as: **What to build** (plain description of the feature), **Key decisions** (what was agreed during planning), **Done when** (concrete acceptance criteria). Keep it concise — 3-6 bullet points max."
         },
         checklist: {
           type: 'array',
@@ -82,7 +90,10 @@ function readFile(filePath) {
 
 function buildContextBlock(agent) {
   const instructionFiles = JSON.parse(agent.instruction_files || '[]');
-  const allContextFiles = [...GLOBAL_FILES, ...instructionFiles];
+  // PM role: client context only — no codebase files.
+  // Technical roles (developer, tester): get codebase files too.
+  const globalFiles = agent.role === 'pm' ? [] : CODEBASE_FILES;
+  const allContextFiles = [...globalFiles, ...instructionFiles];
   const sections = [];
 
   for (const filePath of allContextFiles) {
@@ -140,9 +151,28 @@ async function runPmAgent(taskId) {
       ).join('\n\n');
 
   const currentChecklist = task.pm_checklist ? JSON.parse(task.pm_checklist) : null;
+  const allItemsResolved = currentChecklist && currentChecklist.length > 0 && currentChecklist.every(i => i.resolved);
+  const isFinalReview = allItemsResolved && task.pm_approval_status !== 'approved';
+
   const checklistBlock = currentChecklist && currentChecklist.length > 0
-    ? `## Current Checklist State\n${currentChecklist.map(i => `- [${i.resolved ? 'x' : ' '}] ${i.item}`).join('\n')}\n\nRe-evaluate each item based on the conversation and mark any newly resolved items.`
+    ? [
+        `## Current Checklist State`,
+        currentChecklist.map((i, idx) => {
+          const who = i.manuallyResolved ? ' (manually checked by human)' : '';
+          return `- [${i.resolved ? 'x' : ' '}] ${i.item}${who}`;
+        }).join('\n'),
+        '',
+        isFinalReview
+          ? `ALL items are resolved. FINAL REVIEW MODE — see instructions below.`
+          : `Re-evaluate each item based on the conversation. Mark newly resolved items. Preserve any manually-checked items unless you have a specific concern.`
+      ].join('\n')
     : '';
+
+  const yourTurnBlock = isFinalReview
+    ? `## FINAL REVIEW\nAll checklist items are now marked as resolved (some were manually checked by the human). Do a careful sanity check:\n- Is each item genuinely confirmed by the conversation and task description?\n- Does the priority (${task.priority}) and complexity (${task.complexity}) match the scope?\n- Are there any items that appear prematurely resolved?\n\nIf everything checks out → call approve_task with a clean requirements summary.\nIf you have ONE specific concern → ask about it. Do NOT re-ask things already answered.`
+    : conversationLogs.length === 0
+      ? `## YOUR TURN — FIRST CONTACT\nThis is your first and ideally only question. Do the following in a single call:\n1. Build the full checklist of client decisions needed (5-9 items max). Mark any already answered by the description.\n2. If all items are already resolved → call approve_task immediately.\n3. Otherwise → call ask_question with ALL your open questions in ONE numbered message. The human will answer everything at once. Do NOT ask one question at a time.\n\nCRITICAL checklist rules:\n- Each item = a plain-language CLIENT DECISION (what they need to decide), not a technical task\n- Bad: "Backend category exists or needs creation" | Good: "Should shoes link to existing products or a new page?"\n- Bad: "Acceptance criteria defined" | Good: "What does done look like — when can a customer browse and buy shoes?"\n- A non-technical client must understand every item immediately`
+      : `## YOUR TURN — FOLLOW-UP\nThe human has answered. Re-evaluate the checklist and mark any newly resolved items.\n- If all items are now resolved → call approve_task immediately.\n- If items are still unresolved → ask about ALL of them in one message (numbered list), just like the first contact. Do NOT split remaining questions across multiple round trips. Do NOT re-ask anything already clearly answered.`;
 
   const userMessage = [
     contextBlock ? `## Context Files\n${contextBlock}` : '',
@@ -150,16 +180,14 @@ async function runPmAgent(taskId) {
     `ID: ${task.id}`,
     `Title: ${task.title}`,
     `Description: ${task.description || '(no description provided)'}`,
+    `Acceptance Criteria: ${task.acceptance_criteria || '(none)'}`,
     `Priority: ${task.priority} | Complexity: ${task.complexity}`,
     ``,
     `## Planning Conversation So Far`,
     conversationText,
     ``,
     checklistBlock,
-    `## Your Turn`,
-    conversationLogs.length === 0
-      ? `Review the description. Generate a checklist of all requirements that must be confirmed before a developer can start. Mark any already satisfied by the description. Then either approve (if all resolved) or ask your first question.`
-      : `The human just answered your last question. Re-evaluate the checklist, mark any newly resolved items, then either ask a follow-up or approve if all items are resolved.`
+    yourTurnBlock,
   ].filter(Boolean).join('\n');
 
   let response;
@@ -223,4 +251,240 @@ function triggerPmAgent(taskId) {
   });
 }
 
-module.exports = { triggerPmAgent };
+// ---------------------------------------------------------------------------
+// Developer agent
+// ---------------------------------------------------------------------------
+
+const CLIENT_DIR = path.join(PROJECT_ROOT, 'client');
+
+const DEV_TOOLS = [
+  {
+    name: 'bash',
+    description: 'Execute a shell command (git, gh, npm, etc.). Working directory is the repo root.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        command: { type: 'string', description: 'Shell command to run' }
+      },
+      required: ['command']
+    }
+  },
+  {
+    name: 'read_file',
+    description: 'Read a file from the repository.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Path relative to the repo root (e.g. client/src/App.jsx)' }
+      },
+      required: ['path']
+    }
+  },
+  {
+    name: 'write_file',
+    description: 'Write or overwrite a file. Path MUST be inside the client/ folder.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Path relative to repo root, must start with client/' },
+        content: { type: 'string', description: 'Full file content' }
+      },
+      required: ['path', 'content']
+    }
+  },
+  {
+    name: 'task_log',
+    description: 'Add a progress note to the task log.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        progress: { type: 'number', description: 'Progress percentage 0-100' },
+        message: { type: 'string', description: 'Log message describing what was done' }
+      },
+      required: ['message']
+    }
+  },
+  {
+    name: 'task_complete',
+    description: 'Mark implementation done and move task to Testing. Call this after the PR is merged to master.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        summary: { type: 'string', description: 'Summary of what was implemented, files changed, and PR URL' }
+      },
+      required: ['summary']
+    }
+  },
+  {
+    name: 'request_human',
+    description: 'Flag the task as blocked and move it to Human Action. Use when you need a secret, permission, or cannot continue.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        reason: { type: 'string', description: 'What you need from the human and why' }
+      },
+      required: ['reason']
+    }
+  }
+];
+
+async function runBash(command) {
+  try {
+    const { stdout, stderr } = await execAsync(command, {
+      cwd: PROJECT_ROOT,
+      timeout: 60000,
+      maxBuffer: 2 * 1024 * 1024
+    });
+    return { success: true, output: [stdout, stderr ? `STDERR: ${stderr}` : ''].filter(Boolean).join('\n').trim() };
+  } catch (err) {
+    return { success: false, output: (err.stdout || '') + (err.stderr ? `\nSTDERR: ${err.stderr}` : '') || err.message };
+  }
+}
+
+function devWriteFile(relPath, content) {
+  const absPath = path.join(PROJECT_ROOT, relPath);
+  if (!absPath.startsWith(CLIENT_DIR + path.sep) && absPath !== CLIENT_DIR) {
+    return { error: `Write denied: path must be inside client/. Got: ${relPath}` };
+  }
+  try {
+    fs.mkdirSync(path.dirname(absPath), { recursive: true });
+    fs.writeFileSync(absPath, content, 'utf8');
+    return { success: true };
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
+async function runDevAgent(taskId) {
+  const db = getDb();
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
+  if (!task) return;
+  if (task.column_id !== 'col_inprogress') return;
+  if (task.assigned_agent_id !== 'agent_dev') return;
+
+  const devAgent = db.prepare("SELECT * FROM agents WHERE id = 'agent_dev'").get();
+  if (!devAgent) return;
+
+  const systemPrompt = buildSystemPrompt(devAgent);
+  const contextBlock = buildContextBlock(devAgent);
+
+  const initialPrompt = [
+    contextBlock ? `## Context Files\n${contextBlock}` : '',
+    `## Your Assigned Task`,
+    `ID: ${task.id}`,
+    `Title: ${task.title}`,
+    `Description: ${task.description || '(no description)'}`,
+    `Acceptance Criteria: ${task.acceptance_criteria || '(none specified)'}`,
+    `PM Brief: ${task.pm_review_comment || '(none — check task description)'}`,
+    `Priority: ${task.priority} | Complexity: ${task.complexity}`,
+    ``,
+    `## Instructions`,
+    `Work through the git workflow described in your role:`,
+    `1. git checkout -b feature/${task.id}`,
+    `2. Implement changes inside client/ only`,
+    `3. git add, git commit -m "[${task.id}] ${task.title}"`,
+    `4. git push -u origin feature/${task.id}`,
+    `5. gh pr create --base master --title "[${task.id}] ${task.title}" --body "..."`,
+    `6. gh pr merge --merge --auto (or wait for auto-merge if configured)`,
+    `7. Call task_complete with a summary and the PR URL`,
+    `Use task_log at each milestone (25%, 50%, 75%). If you hit a blocker, call request_human.`
+  ].filter(Boolean).join('\n');
+
+  const messages = [{ role: 'user', content: initialPrompt }];
+
+  let completed = false;
+  const MAX_ITERATIONS = 30;
+
+  for (let i = 0; i < MAX_ITERATIONS && !completed; i++) {
+    let response;
+    try {
+      response = await getClient().messages.create({
+        model: devAgent.model || 'claude-sonnet-4-5',
+        max_tokens: 4096,
+        system: systemPrompt,
+        tools: DEV_TOOLS,
+        messages,
+      });
+    } catch (err) {
+      console.error(`[AgentRunner] Dev agent API error for task ${taskId}:`, err.message);
+      db.prepare(`INSERT INTO task_logs (id, task_id, agent_id, action, message) VALUES (?, ?, ?, ?, ?)`)
+        .run(uuidv4(), taskId, 'agent_dev', 'note', `Dev agent error: ${err.message}`);
+      break;
+    }
+
+    messages.push({ role: 'assistant', content: response.content });
+
+    if (response.stop_reason === 'end_turn') break;
+
+    const toolResults = [];
+
+    for (const block of response.content) {
+      if (block.type !== 'tool_use') continue;
+
+      let result;
+
+      if (block.name === 'bash') {
+        console.log(`[AgentRunner][dev][${taskId}] bash: ${block.input.command}`);
+        result = await runBash(block.input.command);
+
+      } else if (block.name === 'read_file') {
+        const content = readFile(block.input.path);
+        result = content ? { success: true, content } : { error: 'File not found' };
+
+      } else if (block.name === 'write_file') {
+        result = devWriteFile(block.input.path, block.input.content);
+
+      } else if (block.name === 'task_log') {
+        const { progress, message } = block.input;
+        if (progress !== undefined) {
+          db.prepare('UPDATE tasks SET progress = ? WHERE id = ?').run(progress, taskId);
+        }
+        db.prepare(`INSERT INTO task_logs (id, task_id, agent_id, action, message) VALUES (?, ?, ?, ?, ?)`)
+          .run(uuidv4(), taskId, 'agent_dev', 'note', message);
+        console.log(`[AgentRunner][dev][${taskId}] log: ${message}`);
+        result = { success: true };
+
+      } else if (block.name === 'task_complete') {
+        const { summary } = block.input;
+        db.prepare('UPDATE tasks SET progress = 100, column_id = ? WHERE id = ?')
+          .run('col_testing', taskId);
+        db.prepare(`INSERT INTO task_logs (id, task_id, agent_id, action, message) VALUES (?, ?, ?, ?, ?)`)
+          .run(uuidv4(), taskId, 'agent_dev', 'note', `Implementation complete: ${summary}`);
+        db.prepare(`INSERT INTO task_logs (id, task_id, agent_id, action, message) VALUES (?, ?, ?, ?, ?)`)
+          .run(uuidv4(), taskId, 'agent_dev', 'moved', 'Task moved to Testing');
+        console.log(`[AgentRunner][dev][${taskId}] complete`);
+        completed = true;
+        result = { success: true };
+
+      } else if (block.name === 'request_human') {
+        const { reason } = block.input;
+        db.prepare('UPDATE tasks SET column_id = ? WHERE id = ?').run('col_humanaction', taskId);
+        db.prepare(`INSERT INTO task_logs (id, task_id, agent_id, action, message) VALUES (?, ?, ?, ?, ?)`)
+          .run(uuidv4(), taskId, 'agent_dev', 'human_action_requested', reason);
+        console.log(`[AgentRunner][dev][${taskId}] requested human: ${reason}`);
+        completed = true; // stop the loop; human must resume
+        result = { success: true };
+      }
+
+      toolResults.push({
+        type: 'tool_result',
+        tool_use_id: block.id,
+        content: JSON.stringify(result)
+      });
+    }
+
+    if (toolResults.length > 0) {
+      messages.push({ role: 'user', content: toolResults });
+    }
+  }
+}
+
+function triggerDevAgent(taskId) {
+  setImmediate(() => {
+    runDevAgent(taskId).catch(err =>
+      console.error(`[AgentRunner] Dev unhandled error for task ${taskId}:`, err)
+    );
+  });
+}
+
+module.exports = { triggerPmAgent, triggerDevAgent };

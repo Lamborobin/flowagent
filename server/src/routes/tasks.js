@@ -2,7 +2,7 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const { getDb } = require('../db');
 const { requirePermission, attachAgent } = require('../middleware/auth');
-const { triggerPmAgent } = require('../services/agentRunner');
+const { triggerPmAgent, triggerDevAgent } = require('../services/agentRunner');
 
 const router = express.Router();
 
@@ -200,10 +200,11 @@ router.patch('/:id', requirePermission('task:update'), (req, res) => {
     }
   }
 
-  // Notify Developer if assigned in In Progress
+  // Trigger Developer agent when assigned in In Progress
   if (req.body.assigned_agent_id === 'agent_dev' && task.column_id === 'col_inprogress') {
     db.prepare(`INSERT INTO task_logs (id, task_id, agent_id, action, message) VALUES (?, ?, ?, ?, ?)`)
-      .run(uuidv4(), task.id, agentId, 'developer_assigned', 'Developer assigned - ready to start work');
+      .run(uuidv4(), task.id, agentId, 'developer_assigned', 'Developer assigned — starting implementation');
+    triggerDevAgent(task.id);
   }
 
   const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id);
@@ -243,7 +244,45 @@ router.post('/:id/move', requirePermission('task:move'), (req, res) => {
     .run(uuidv4(), task.id, agentId, 'moved', fromColumn, column_id, message || `Moved by ${req.agent?.name || req.agent?.role || 'unknown'}`);
 
   const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id);
+
+  // Trigger developer if task just entered In Progress with dev already assigned
+  if (column_id === 'col_inprogress' && updated.assigned_agent_id === 'agent_dev') {
+    triggerDevAgent(task.id);
+  }
+
   res.json({ ...updated, tags: JSON.parse(updated.tags), metadata: JSON.parse(updated.metadata), is_locked: isTaskLocked(updated) });
+});
+
+// POST /tasks/:id/toggle_checklist_item — human manually checks/unchecks a checklist item
+router.post('/:id/toggle_checklist_item', requirePermission('task:update'), (req, res) => {
+  const db = getDb();
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+
+  const checklist = JSON.parse(task.pm_checklist || '[]');
+  const { index } = req.body;
+
+  if (typeof index !== 'number' || index < 0 || index >= checklist.length) {
+    return res.status(400).json({ error: 'Invalid checklist index' });
+  }
+
+  const nowResolved = !checklist[index].resolved;
+  checklist[index] = { ...checklist[index], resolved: nowResolved, manuallyResolved: nowResolved || undefined };
+  db.prepare('UPDATE tasks SET pm_checklist = ? WHERE id = ?').run(JSON.stringify(checklist), task.id);
+
+  const agentId = req.agent?.id || null;
+  const item = checklist[index];
+  db.prepare(`INSERT INTO task_logs (id, task_id, agent_id, action, message) VALUES (?, ?, ?, ?, ?)`)
+    .run(uuidv4(), task.id, agentId, 'updated',
+      `Checklist: "${item.item}" manually ${item.resolved ? 'checked' : 'unchecked'}`);
+
+  const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id);
+  res.json({ ...updated, pm_checklist: checklist, is_locked: isTaskLocked(updated) });
+
+  // Trigger PM to re-evaluate, but only if PM is actively reviewing and not waiting for human to answer
+  if (task.pm_approval_status && task.pm_approval_status !== 'approved' && !updated.pm_pending_question) {
+    triggerPmAgent(task.id);
+  }
 });
 
 // POST /tasks/:id/log — add a log entry

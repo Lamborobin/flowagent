@@ -21,6 +21,7 @@ export const tasksApi = {
   reject: (id, data) => api.post(`/tasks/${id}/reject`, data).then(r => r.data),
   archive: (id) => api.post(`/tasks/${id}/archive`).then(r => r.data),
   bypassPm: (id) => api.post(`/tasks/${id}/bypass_pm`).then(r => r.data),
+  toggleChecklistItem: (id, index) => api.post(`/tasks/${id}/toggle_checklist_item`, { index }).then(r => r.data),
 };
 
 export const columnsApi = {
