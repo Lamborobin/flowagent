@@ -6,6 +6,12 @@ const { triggerPmAgent, triggerDevAgent } = require('../services/agentRunner');
 
 const router = express.Router();
 
+// Which agent auto-triggers in each column (both conditions must be true simultaneously)
+const COLUMN_AGENT_TRIGGERS = {
+  'col_backlog': 'agent_pm',
+  'col_inprogress': 'agent_dev',
+};
+
 // Column-based assignment restrictions
 const COLUMN_ASSIGNMENT_RULES = {
   'col_backlog': ['agent_pm', 'human'],
@@ -192,21 +198,22 @@ router.patch('/:id', requirePermission('task:update'), (req, res) => {
 
   let triggerPm = false;
 
-  // Auto-request PM review if PM assigned in Backlog
-  if (req.body.assigned_agent_id === 'agent_pm' && task.column_id === 'col_backlog') {
-    if (!task.pm_approval_status) {
-      db.prepare(`UPDATE tasks SET pm_approval_status = 'pending' WHERE id = ?`).run(task.id);
-      db.prepare(`INSERT INTO task_logs (id, task_id, agent_id, action, message) VALUES (?, ?, ?, ?, ?)`)
-        .run(uuidv4(), task.id, agentId, 'pm_review_requested', 'PM review automatically requested on assignment');
-      triggerPm = true;
+  // Trigger agent only when BOTH the right agent is assigned AND the task is in the matching column
+  if (req.body.assigned_agent_id !== undefined) {
+    const expectedAgent = COLUMN_AGENT_TRIGGERS[task.column_id];
+    const newAgentId = req.body.assigned_agent_id;
+    if (expectedAgent && newAgentId === expectedAgent) {
+      if (task.column_id === 'col_backlog' && !task.pm_approval_status) {
+        db.prepare(`UPDATE tasks SET pm_approval_status = 'pending' WHERE id = ?`).run(task.id);
+        db.prepare(`INSERT INTO task_logs (id, task_id, agent_id, action, message) VALUES (?, ?, ?, ?, ?)`)
+          .run(uuidv4(), task.id, agentId, 'pm_review_requested', 'PM review automatically requested on assignment');
+        triggerPm = true;
+      } else if (task.column_id === 'col_inprogress') {
+        db.prepare(`INSERT INTO task_logs (id, task_id, agent_id, action, message) VALUES (?, ?, ?, ?, ?)`)
+          .run(uuidv4(), task.id, agentId, 'developer_assigned', 'Developer assigned — starting implementation');
+        triggerDevAgent(task.id);
+      }
     }
-  }
-
-  // Trigger Developer agent when assigned in In Progress
-  if (req.body.assigned_agent_id === 'agent_dev' && task.column_id === 'col_inprogress') {
-    db.prepare(`INSERT INTO task_logs (id, task_id, agent_id, action, message) VALUES (?, ?, ?, ?, ?)`)
-      .run(uuidv4(), task.id, agentId, 'developer_assigned', 'Developer assigned — starting implementation');
-    triggerDevAgent(task.id);
   }
 
   const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id);
@@ -247,9 +254,14 @@ router.post('/:id/move', requirePermission('task:move'), (req, res) => {
 
   const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id);
 
-  // Trigger developer if task just entered In Progress with dev already assigned
-  if (column_id === 'col_inprogress' && updated.assigned_agent_id === 'agent_dev') {
-    triggerDevAgent(task.id);
+  // Trigger agent if task moved into a column where the assigned agent is already correct
+  const expectedAgent = COLUMN_AGENT_TRIGGERS[column_id];
+  if (expectedAgent && updated.assigned_agent_id === expectedAgent) {
+    if (column_id === 'col_backlog' && !task.pm_approval_status) {
+      triggerPmAgent(task.id);
+    } else if (column_id === 'col_inprogress') {
+      triggerDevAgent(task.id);
+    }
   }
 
   res.json({ ...updated, tags: JSON.parse(updated.tags), metadata: JSON.parse(updated.metadata), is_locked: isTaskLocked(updated) });
