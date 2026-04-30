@@ -6,7 +6,7 @@ export const products = [
     price: 189,
     inStock: true,
     stockCount: 12,
-    image: null,
+    image: 'https://images.unsplash.com/photo-1591047139829-d91aecb6caea?w=600&h=800&fit=crop',
     tags: ['women', 'seasonal'],
   },
   {
@@ -16,7 +16,7 @@ export const products = [
     price: 129,
     inStock: true,
     stockCount: 8,
-    image: null,
+    image: 'https://images.unsplash.com/photo-1594633313593-bab3825d0caf?w=600&h=800&fit=crop',
     tags: ['women', 'basics'],
   },
   {
@@ -26,7 +26,7 @@ export const products = [
     price: 215,
     inStock: true,
     stockCount: 5,
-    image: null,
+    image: 'https://images.unsplash.com/photo-1548036328-c9fa89d128fa?w=600&h=800&fit=crop',
     tags: ['accessories'],
   },
   {
@@ -36,7 +36,7 @@ export const products = [
     price: 89,
     inStock: false,
     stockCount: 0,
-    image: null,
+    image: 'https://images.unsplash.com/photo-1601924994987-69e26d50dc26?w=600&h=800&fit=crop',
     tags: ['accessories'],
   },
   {
@@ -46,7 +46,7 @@ export const products = [
     price: 65,
     inStock: true,
     stockCount: 24,
-    image: null,
+    image: 'https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=600&h=800&fit=crop',
     tags: ['unisex', 'basics'],
   },
   {
@@ -56,7 +56,7 @@ export const products = [
     price: 75,
     inStock: true,
     stockCount: 15,
-    image: null,
+    image: 'https://images.unsplash.com/photo-1624222247344-550fb60583c2?w=600&h=800&fit=crop',
     tags: ['accessories', 'unisex'],
   },
   {
@@ -66,7 +66,7 @@ export const products = [
     price: 299,
     inStock: true,
     stockCount: 8,
-    image: null,
+    image: 'https://images.unsplash.com/photo-1622279457486-62dcc4a431d6?w=600&h=800&fit=crop',
     tags: ['sports', 'tennis'],
   },
   {
@@ -76,7 +76,7 @@ export const products = [
     price: 179,
     inStock: true,
     stockCount: 12,
-    image: null,
+    image: 'https://images.unsplash.com/photo-1591195853828-11db59a44f6b?w=600&h=800&fit=crop',
     tags: ['sports', 'tennis'],
   },
   {
@@ -86,7 +86,7 @@ export const products = [
     price: 89,
     inStock: true,
     stockCount: 20,
-    image: null,
+    image: 'https://images.unsplash.com/photo-1618354691373-d851c5c3a990?w=600&h=800&fit=crop',
     tags: ['sports', 'tennis', 'unisex'],
   },
   {
@@ -96,7 +96,7 @@ export const products = [
     price: 159,
     inStock: true,
     stockCount: 15,
-    image: null,
+    image: 'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=600&h=800&fit=crop',
     tags: ['sports', 'tennis'],
   },
   {
@@ -106,7 +106,7 @@ export const products = [
     price: 45,
     inStock: true,
     stockCount: 30,
-    image: null,
+    image: 'https://images.unsplash.com/photo-1587280501635-68a0e82cd5ff?w=600&h=800&fit=crop',
     tags: ['sports', 'tennis'],
   },
   {
@@ -116,7 +116,7 @@ export const products = [
     price: 65,
     inStock: false,
     stockCount: 0,
-    image: null,
+    image: 'https://images.unsplash.com/photo-1554068865-24cecd4e34b8?w=600&h=800&fit=crop',
     tags: ['sports', 'tennis'],
   },
 ]
