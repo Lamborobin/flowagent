@@ -4,7 +4,26 @@
       "Bash(git init *)",
       "Bash(git config *)",
       "Bash(git add *)",
-      "Bash(git commit -m 'Initial commit: FlowAgent autonomous AI agent orchestration system *)"
+      "Bash(git commit -m 'Initial commit: FlowAgent autonomous AI agent orchestration system *)",
+      "Bash(gh repo *)",
+      "Bash(git remote *)",
+      "Bash(git push *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git checkout *)",
+      "Bash(git merge *)",
+      "Bash(node -e \"require\\('./server/src/db/index.js'\\)\")",
+      "Bash(node -e \"require\\('./server/src/routes/other.js'\\)\")",
+      "Bash(node -e \"require\\('./server/src/routes/tasks.js'\\)\")",
+      "Bash(gh pr create --title 'feat: consistent archive/delete logic across all entities' --body ' *)",
+      "Bash(winget list *)",
+      "PowerShell(gh --version 2>&1)",
+      "Bash(git commit -m 'docs: document archive/delete convention in CLAUDE.md *)",
+      "Bash(npm install *)",
+      "Bash(npm run *)",
+      "Bash(node -e \"require\\('./src/services/agentRunner'\\)\")",
+      "Bash(node -e \"require\\('./src/routes/tasks'\\)\")",
+      "Bash(node -e \"require\\('./src/routes/tasks'\\); require\\('./src/services/agentRunner'\\)\")",
+      "Bash(node -e \"require\\('./src/services/agentRunner'\\); require\\('./src/db'\\)\")"
     ]
   }
 }
