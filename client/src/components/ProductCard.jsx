@@ -1,12 +1,17 @@
+import { useState } from 'react'
+
 export default function ProductCard({ product, onAddToCart }) {
+  const [imageError, setImageError] = useState(false)
+
   return (
     <div className="group">
       <div className="bg-gray-50 aspect-[3/4] mb-3 overflow-hidden">
-        {product.image ? (
+        {product.image && !imageError ? (
           <img
             src={product.image}
             alt={product.name}
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+            onError={() => setImageError(true)}
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center text-gray-300 text-xs uppercase tracking-widest">
