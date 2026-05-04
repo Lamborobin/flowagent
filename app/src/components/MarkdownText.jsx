@@ -47,20 +47,34 @@ export default function MarkdownText({ text, className = '' }) {
       const items = [];
       while (i < lines.length && (isListItem(lines[i]) || lines[i].trim() === '')) {
         if (lines[i].trim() === '') { i++; continue; }
-        items.push(
-          <li key={i}>{renderInline(stripListMarker(lines[i].trim()))}</li>
-        );
+        const trimmed = lines[i].trim();
+        if (isOrderedItem(trimmed)) {
+          const m = trimmed.match(/^(\d+)\.\s+(.*)/);
+          items.push(
+            <li key={i} className="flex gap-1.5">
+              <span className="shrink-0 tabular-nums">{m ? m[1] : '1'}.</span>
+              <span>{renderInline(m ? m[2] : stripListMarker(trimmed))}</span>
+            </li>
+          );
+        } else {
+          items.push(
+            <li key={i} className="flex gap-1.5">
+              <span className="shrink-0">•</span>
+              <span>{renderInline(stripListMarker(trimmed))}</span>
+            </li>
+          );
+        }
         i++;
       }
       if (ordered) {
         nodes.push(
-          <ol key={keyCounter++} className="list-decimal list-inside space-y-0.5">
+          <ul key={keyCounter++} className="space-y-0.5 pl-0">
             {items}
-          </ol>
+          </ul>
         );
       } else {
         nodes.push(
-          <ul key={keyCounter++} className="list-disc list-inside space-y-0.5">
+          <ul key={keyCounter++} className="space-y-0.5 pl-0">
             {items}
           </ul>
         );
