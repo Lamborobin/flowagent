@@ -15,6 +15,7 @@ export default function Column({ column, tasks }) {
   const { setShowNewTask, archiveColumn, deleteColumn, updateColumn } = useStore();
 
   const isProtected = !!column.is_protected;
+  const isUnassigned = column.id === 'col_unassigned';
 
   // Outer div: sortable for column reordering (disabled for protected columns)
   const {
@@ -130,7 +131,11 @@ export default function Column({ column, tasks }) {
         )}
 
         <div className="flex items-center gap-2 min-w-0 flex-1 ml-1">
-          {renaming ? (
+          {isUnassigned ? (
+            <h3 className="text-sm font-semibold text-amber-400 truncate flex items-center gap-1.5">
+              <span>⚠</span> Unassigned
+            </h3>
+          ) : renaming ? (
             <input
               ref={renameRef}
               value={renameValue}
@@ -154,7 +159,7 @@ export default function Column({ column, tasks }) {
         </div>
 
         <div className="flex items-center gap-0.5 shrink-0">
-          {column.id === 'col_backlog' && (
+          {column.id === 'col_backlog' && !isUnassigned && (
             <button
               onClick={() => setShowNewTask(true)}
               className="p-1 rounded-lg text-gray-600 hover:text-gray-300 hover:bg-surface-3 transition-colors"
@@ -162,7 +167,7 @@ export default function Column({ column, tasks }) {
               <Plus size={14} />
             </button>
           )}
-          {isProtected ? (
+          {isUnassigned ? null : isProtected ? (
             <button
               onClick={startRename}
               className="p-1 rounded-lg text-gray-700 hover:text-gray-400 hover:bg-surface-3 transition-colors"

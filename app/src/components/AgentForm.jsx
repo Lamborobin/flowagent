@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { FileText, Plus, Info } from 'lucide-react';
 import { instructionsApi } from '../api';
+import { useStore } from '../store';
 
 export const MODELS = [
   { value: 'claude-opus-4-5',          label: 'Opus 4.5 — most capable' },
@@ -44,6 +45,7 @@ export function useAgentForm(initial = {}) {
     template_system_prompt: '',
     system_prompt_override: null,
     created_from_template_id: null,
+    role_ids: [],
     ...initial,
   });
   const [generatedRole, setGeneratedRole] = useState(initial.role || '');
@@ -85,11 +87,20 @@ export function useAgentForm(initial = {}) {
     return form.prompt_file || undefined;
   }
 
+  function toggleRole(roleId) {
+    setForm(f => ({
+      ...f,
+      role_ids: f.role_ids.includes(roleId)
+        ? f.role_ids.filter(r => r !== roleId)
+        : [...f.role_ids, roleId],
+    }));
+  }
+
   return {
     form, set, generatedRole,
     availableFiles,
     newPrompt, setNewPromptField,
-    handleNameChange, toggleInstructionFile, resolvePromptFile,
+    handleNameChange, toggleInstructionFile, resolvePromptFile, toggleRole,
   };
 }
 
@@ -264,6 +275,64 @@ export function TemplatePromptField({ form, onChange }) {
       />
       <p className={`text-right text-[10px] ${charCount > 900 ? 'text-amber-400' : 'text-gray-600'}`}>
         {charCount} / 1000
+      </p>
+    </div>
+  );
+}
+
+export function RoleField({ selectedRoleIds, onToggle }) {
+  const { roles } = useStore();
+
+  const COLUMN_LABELS = {
+    col_backlog: 'Backlog',
+    col_inprogress: 'In Progress',
+    col_testing: 'Testing',
+  };
+
+  return (
+    <div>
+      <div className="flex items-center gap-1.5 mb-1">
+        <label className="text-xs font-medium text-gray-400">Column Access</label>
+        <span className="text-[10px] text-gray-600">· determines which columns this agent can work in</span>
+      </div>
+      <div className="space-y-1.5 bg-surface-3 border border-border rounded-lg p-3">
+        {roles.map(role => {
+          const checked = selectedRoleIds.includes(role.id);
+          const colLabels = role.allowed_column_ids.map(id => COLUMN_LABELS[id] || id).filter(Boolean);
+          return (
+            <label key={role.id} className="flex items-center gap-2.5 cursor-pointer group">
+              <div
+                onClick={() => onToggle(role.id)}
+                className={`w-4 h-4 rounded border flex items-center justify-center transition-colors shrink-0 ${
+                  checked ? 'border-accent bg-accent' : 'border-border bg-surface-1 group-hover:border-accent/50'
+                }`}
+              >
+                {checked && (
+                  <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 12 12">
+                    <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                )}
+              </div>
+              <div className="w-2 h-2 rounded-full shrink-0" style={{ background: role.color }} />
+              <span className="text-xs text-gray-400 group-hover:text-gray-300 flex-1">{role.name}</span>
+              {colLabels.length > 0 ? (
+                <span className="text-[9px] font-mono text-gray-600 bg-surface-1 border border-border px-1.5 py-0.5 rounded shrink-0">
+                  {colLabels.join(', ')}
+                </span>
+              ) : (
+                <span className="text-[9px] font-mono text-gray-600 bg-surface-1 border border-border px-1.5 py-0.5 rounded shrink-0">
+                  any column
+                </span>
+              )}
+            </label>
+          );
+        })}
+        {roles.length === 0 && (
+          <p className="text-[10px] text-gray-600 italic">No roles available.</p>
+        )}
+      </div>
+      <p className="mt-1 text-[10px] text-gray-600">
+        System roles cannot be deleted. Removing a column-specific role displaces any assigned tasks to Unassigned.
       </p>
     </div>
   );

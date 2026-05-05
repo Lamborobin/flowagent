@@ -4,7 +4,7 @@ const cors = require('cors');
 const morgan = require('morgan');
 const { initDb } = require('./db');
 const tasksRouter = require('./routes/tasks');
-const { agentsRouter, columnsRouter, secretsRouter, instructionsRouter, agentTemplatesRouter } = require('./routes/other');
+const { agentsRouter, columnsRouter, secretsRouter, instructionsRouter, agentTemplatesRouter, rolesRouter } = require('./routes/other');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -21,6 +21,7 @@ app.use('/api/columns', columnsRouter);
 app.use('/api/secrets', secretsRouter);
 app.use('/api/instructions', instructionsRouter);
 app.use('/api/agent-templates', agentTemplatesRouter);
+app.use('/api/roles', rolesRouter);
 
 // Health check
 app.get('/api/health', (req, res) => {

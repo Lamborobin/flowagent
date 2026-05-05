@@ -15,9 +15,17 @@ function parseAgent(a) {
     ...a,
     permissions: JSON.parse(a.permissions || '[]'),
     instruction_files: JSON.parse(a.instruction_files || '[]'),
+    role_ids: JSON.parse(a.role_ids || '[]'),
     is_template: a.is_template === 1,
   };
 }
+
+// Column role requirements (mirrors tasks.js)
+const COLUMN_ROLE_REQUIREMENTS = {
+  'col_backlog': ['role_pm'],
+  'col_inprogress': ['role_developer'],
+  'col_testing': ['role_tester'],
+};
 
 function parseTemplate(t) {
   return {
@@ -69,10 +77,12 @@ agentsRouter.post('/', (req, res) => {
     }
   }
 
+  const role_ids_val = req.body.role_ids?.length ? JSON.stringify(req.body.role_ids) : JSON.stringify(['role_any']);
+
   db.prepare(`
-    INSERT INTO agents (id, name, role, model, description, permissions, prompt_file, instruction_files, color, created_from_template_id, is_template, template_system_prompt)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, name, role, model, description, JSON.stringify(permissions), prompt_file, JSON.stringify(instruction_files), color, created_from_template_id || null, is_template_flag, template_system_prompt_val);
+    INSERT INTO agents (id, name, role, model, description, permissions, prompt_file, instruction_files, color, created_from_template_id, is_template, template_system_prompt, role_ids)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, name, role, model, description, JSON.stringify(permissions), prompt_file, JSON.stringify(instruction_files), color, created_from_template_id || null, is_template_flag, template_system_prompt_val, role_ids_val);
 
   const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(id);
   res.status(201).json(parseAgent(agent));
@@ -113,7 +123,7 @@ agentsRouter.patch('/:id', (req, res) => {
   const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
   if (!agent) return res.status(404).json({ error: 'Agent not found' });
 
-  const { name, model, description, permissions, color, active, prompt_file, instruction_files, template_system_prompt } = req.body;
+  const { name, model, description, permissions, color, active, prompt_file, instruction_files, template_system_prompt, role_ids } = req.body;
   const allowed = {};
   if (name !== undefined) allowed.name = name;
   if (model !== undefined) allowed.model = model;
@@ -126,14 +136,41 @@ agentsRouter.patch('/:id', (req, res) => {
   if (Object.prototype.hasOwnProperty.call(req.body, 'template_system_prompt')) {
     allowed.template_system_prompt = template_system_prompt ?? null;
   }
+  if (role_ids !== undefined) allowed.role_ids = JSON.stringify(role_ids);
 
   if (Object.keys(allowed).length === 0) return res.status(400).json({ error: 'Nothing to update' });
 
   const setClauses = Object.keys(allowed).map(k => `${k} = ?`).join(', ');
   db.prepare(`UPDATE agents SET ${setClauses} WHERE id = ?`).run(...Object.values(allowed), agent.id);
 
+  // When role_ids changed: find tasks in now-invalid columns and move them to col_unassigned
+  let displacedTasks = [];
+  if (role_ids !== undefined) {
+    const newRoleIds = role_ids;
+    const assignedTasks = db.prepare(
+      "SELECT * FROM tasks WHERE assigned_agent_id = ? AND archived_at IS NULL AND column_id != 'col_unassigned'"
+    ).all(agent.id);
+    for (const task of assignedTasks) {
+      const requiredRoles = COLUMN_ROLE_REQUIREMENTS[task.column_id];
+      if (!requiredRoles) continue; // custom column — no restriction
+      const hasRole = newRoleIds.includes('role_any') || requiredRoles.some(r => newRoleIds.includes(r));
+      if (!hasRole) {
+        db.prepare('UPDATE tasks SET column_id = ? WHERE id = ?').run('col_unassigned', task.id);
+        db.prepare(`INSERT INTO task_logs (id, task_id, agent_id, action, from_column, to_column, message) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+          .run(uuidv4(), task.id, null, 'moved', task.column_id, 'col_unassigned',
+            'Moved to Unassigned — assigned agent lost required role for this column');
+        const displaced = db.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id);
+        displacedTasks.push({
+          ...displaced,
+          tags: JSON.parse(displaced.tags || '[]'),
+          metadata: JSON.parse(displaced.metadata || '{}'),
+        });
+      }
+    }
+  }
+
   const updated = db.prepare('SELECT * FROM agents WHERE id = ?').get(agent.id);
-  res.json(parseAgent(updated));
+  res.json({ agent: parseAgent(updated), displaced_tasks: displacedTasks });
 });
 
 agentsRouter.post('/:id/archive', (req, res) => {
@@ -613,4 +650,13 @@ agentTemplatesRouter.delete('/:id', (req, res) => {
   res.json({ ok: true, deleted: true });
 });
 
-module.exports = { agentsRouter, columnsRouter, secretsRouter, instructionsRouter, agentTemplatesRouter };
+// ── Roles ─────────────────────────────────────────────────────────────────────
+const rolesRouter = express.Router();
+
+rolesRouter.get('/', (req, res) => {
+  const db = getDb();
+  const roles = db.prepare('SELECT * FROM roles ORDER BY name ASC').all();
+  res.json(roles.map(r => ({ ...r, allowed_column_ids: JSON.parse(r.allowed_column_ids || '[]') })));
+});
+
+module.exports = { agentsRouter, columnsRouter, secretsRouter, instructionsRouter, agentTemplatesRouter, rolesRouter };

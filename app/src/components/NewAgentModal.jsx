@@ -5,7 +5,7 @@ import { instructionsApi } from '../api';
 import {
   useAgentForm,
   NameField, ModelField, ColorField,
-  SystemPromptField, ContextFilesField, TemplatePromptField, MODELS,
+  SystemPromptField, ContextFilesField, TemplatePromptField, RoleField, MODELS,
 } from './AgentForm';
 
 export default function NewAgentModal() {
@@ -16,7 +16,7 @@ export default function NewAgentModal() {
     form, set, generatedRole,
     availableFiles,
     newPrompt, setNewPromptField,
-    handleNameChange, toggleInstructionFile, resolvePromptFile,
+    handleNameChange, toggleInstructionFile, resolvePromptFile, toggleRole,
   } = useAgentForm();
 
   const [saving, setSaving] = useState(false);
@@ -81,6 +81,7 @@ export default function NewAgentModal() {
         permissions: ['task:read'],
         created_from_template_id: selectedTemplateId || undefined,
         template_system_prompt: form.template_system_prompt || null,
+        role_ids: form.role_ids.length > 0 ? form.role_ids : ['role_any'],
       });
       setShowNewAgent(false);
     } catch (err) {
@@ -148,6 +149,8 @@ export default function NewAgentModal() {
           </div>
 
           <ModelField value={form.model} onChange={v => set('model', v)} />
+
+          <RoleField selectedRoleIds={form.role_ids} onToggle={toggleRole} />
 
           <TemplatePromptField
             form={form}

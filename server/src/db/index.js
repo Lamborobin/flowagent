@@ -300,8 +300,54 @@ function initDb() {
   db.prepare("UPDATE agents SET instruction_files = ? WHERE id = 'agent_dev'").run(devInstructions);
   db.prepare("UPDATE agents SET instruction_files = ? WHERE id = 'agent_test'").run(devInstructions);
 
+  // Roles table (system roles — non-deletable)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS roles (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      allowed_column_ids TEXT DEFAULT '[]',
+      color TEXT DEFAULT '#6b7280',
+      is_system INTEGER DEFAULT 1
+    );
+  `);
+
+  // Seed system roles (idempotent)
+  const insertRoleIfMissing = db.prepare(
+    `INSERT OR IGNORE INTO roles (id, name, description, allowed_column_ids, color, is_system) VALUES (?, ?, ?, ?, ?, 1)`
+  );
+  [
+    ['role_pm',        'Project Manager', 'Can be assigned to Backlog tasks',      JSON.stringify(['col_backlog']),     '#6366f1'],
+    ['role_developer', 'Developer',       'Can be assigned to In Progress tasks',  JSON.stringify(['col_inprogress']),  '#3b82f6'],
+    ['role_tester',    'Tester',          'Can be assigned to Testing tasks',       JSON.stringify(['col_testing']),     '#8b5cf6'],
+    ['role_any',       'General',         'Can be assigned to any column',          JSON.stringify([]),                  '#6b7280'],
+  ].forEach(r => insertRoleIfMissing.run(...r));
+
+  // Migration: add role_ids to agents
+  if (!agentColNames.includes('role_ids')) {
+    db.exec("ALTER TABLE agents ADD COLUMN role_ids TEXT DEFAULT '[]'");
+    console.log('✅ Migrated: added role_ids to agents');
+  }
+
+  // Migration: set default role_ids for existing agents (idempotent)
+  const agentsForRoles = db.prepare("SELECT id, role_ids FROM agents").all();
+  const setDefaultRoles = db.prepare("UPDATE agents SET role_ids = ? WHERE id = ? AND (role_ids IS NULL OR role_ids = '[]')");
+  for (const a of agentsForRoles) {
+    if ((a.role_ids || '[]') !== '[]') continue;
+    const defaults = a.id === 'agent_pm'   ? ['role_pm']
+                   : a.id === 'agent_dev'  ? ['role_developer']
+                   : a.id === 'agent_test' ? ['role_tester']
+                   : ['role_any'];
+    setDefaultRoles.run(JSON.stringify(defaults), a.id);
+  }
+
+  // Seed col_unassigned (idempotent — only added when missing)
+  db.prepare(
+    `INSERT OR IGNORE INTO columns (id, name, position, color, is_protected) VALUES ('col_unassigned', 'Unassigned', -1, '#f59e0b', 1)`
+  ).run();
+
   // Seed default columns if empty
-  const colCount = db.prepare('SELECT COUNT(*) as c FROM columns').get();
+  const colCount = db.prepare("SELECT COUNT(*) as c FROM columns WHERE id != 'col_unassigned'").get();
   if (colCount.c === 0) {
     const insertCol = db.prepare('INSERT INTO columns (id, name, position, color, is_protected) VALUES (?, ?, ?, ?, ?)');
     const cols = [

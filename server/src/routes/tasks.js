@@ -12,15 +12,26 @@ const COLUMN_AGENT_TRIGGERS = {
   'col_inprogress': 'agent_dev',
 };
 
-// Column-based assignment restrictions
-const COLUMN_ASSIGNMENT_RULES = {
-  'col_backlog': ['agent_pm', 'human'],
-  'col_inprogress': ['agent_dev', 'human'],
-  'col_testing': ['agent_test', 'human'],
-  'col_humanaction': ['human'],
-  'col_humanreview': ['human'],
-  'col_done': ['human']
+// Role-based column assignment validation
+const COLUMN_ROLE_REQUIREMENTS = {
+  'col_backlog': ['role_pm'],
+  'col_inprogress': ['role_developer'],
+  'col_testing': ['role_tester'],
 };
+const HUMAN_ONLY_COLUMNS = ['col_humanaction', 'col_humanreview', 'col_done'];
+
+function canAgentBeInColumn(agentId, columnId, db) {
+  if (!agentId || agentId === 'human') return true;
+  if (columnId === 'col_unassigned') return true;
+  if (HUMAN_ONLY_COLUMNS.includes(columnId)) return false;
+  const requiredRoles = COLUMN_ROLE_REQUIREMENTS[columnId];
+  if (!requiredRoles) return true; // custom column — no restriction
+  const agent = db.prepare('SELECT role_ids FROM agents WHERE id = ?').get(agentId);
+  if (!agent) return false;
+  const agentRoleIds = JSON.parse(agent.role_ids || '[]');
+  if (agentRoleIds.includes('role_any')) return true;
+  return requiredRoles.some(r => agentRoleIds.includes(r));
+}
 
 // Helper: task is locked when it has a PM planning process underway and not yet fully approved
 function isTaskLocked(task) {
@@ -134,13 +145,11 @@ router.patch('/:id', requirePermission('task:update'), (req, res) => {
   const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
   if (!task) return res.status(404).json({ error: 'Task not found' });
 
-  // Validate assignment restrictions
+  // Validate assignment restrictions via role-based rules
   if (req.body.assigned_agent_id !== undefined) {
-    const allowedAgents = COLUMN_ASSIGNMENT_RULES[task.column_id] || [];
-    if (!allowedAgents.includes(req.body.assigned_agent_id)) {
+    if (!canAgentBeInColumn(req.body.assigned_agent_id, task.column_id, db)) {
       return res.status(403).json({
-        error: `Agent ${req.body.assigned_agent_id} cannot be assigned to column ${task.column_id}`,
-        allowed_agents: allowedAgents
+        error: `Agent ${req.body.assigned_agent_id} does not have the required role for column ${task.column_id}`,
       });
     }
   }

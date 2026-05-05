@@ -26,8 +26,11 @@ export default function App() {
   const [addColError, setAddColError] = useState('');
   const newColInputRef = useRef(null);
 
-  const activeColumns = columns.filter(c => !c.archived_at);
-  const archivedColumns = columns.filter(c => !!c.archived_at);
+  const allActiveColumns = columns.filter(c => !c.archived_at);
+  const activeColumns = allActiveColumns.filter(c =>
+    c.id !== 'col_unassigned' || tasks.some(t => t.column_id === 'col_unassigned')
+  );
+  const archivedColumns = columns.filter(c => !!c.archived_at && c.id !== 'col_unassigned');
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
@@ -46,15 +49,24 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // Column-agent assignment restrictions (mirrors API enforcement)
-  const COLUMN_ALLOWED = {
-    col_backlog: ['agent_pm', 'human'],
-    col_inprogress: ['agent_dev', 'human'],
-    col_testing: ['agent_test', 'human'],
-    col_humanaction: ['human'],
-    col_humanreview: ['human'],
-    col_done: ['human'],
+  // Role-based column assignment validation (mirrors API enforcement)
+  const COLUMN_ROLE_REQUIREMENTS = {
+    col_backlog: ['role_pm'],
+    col_inprogress: ['role_developer'],
+    col_testing: ['role_tester'],
   };
+  const HUMAN_ONLY = ['col_humanaction', 'col_humanreview', 'col_done'];
+
+  function canAssignAgent(agent, columnId) {
+    if (!agent || agent.id === 'human') return true;
+    if (columnId === 'col_unassigned') return true;
+    if (HUMAN_ONLY.includes(columnId)) return false;
+    const required = COLUMN_ROLE_REQUIREMENTS[columnId];
+    if (!required) return true; // custom column
+    const roleIds = agent.role_ids || [];
+    if (roleIds.includes('role_any')) return true;
+    return required.some(r => roleIds.includes(r));
+  }
 
   function handleDragStart({ active }) {
     const agent = agents.find(a => a.id === active.id);
@@ -112,9 +124,8 @@ export default function App() {
       const task = tasks.find(t => t.id === rawId);
       if (!task) return;
       const agent = prevDragging.agent;
-      const allowed = COLUMN_ALLOWED[task.column_id];
-      if (allowed && !allowed.includes(agent.id)) {
-        setDragError(`${agent.name} is not allowed in this column.`);
+      if (!canAssignAgent(agent, task.column_id)) {
+        setDragError(`${agent.name} does not have the required role for this column.`);
         setTimeout(() => setDragError(''), 3500);
         return;
       }

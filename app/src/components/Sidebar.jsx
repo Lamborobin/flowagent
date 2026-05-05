@@ -5,7 +5,11 @@ import { useDraggable } from '@dnd-kit/core';
 import { useStore } from '../store';
 
 function AgentPanel({ agent, onClose, onEdit }) {
+  const { roles } = useStore();
   const instructionFiles = agent.instruction_files || [];
+  const agentRoles = (agent.role_ids || [])
+    .map(id => roles.find(r => r.id === id))
+    .filter(Boolean);
 
   return (
     <div className="mt-1 mb-2 mx-1 bg-surface-3 border border-border rounded-xl p-3 space-y-3">
@@ -45,6 +49,20 @@ function AgentPanel({ agent, onClose, onEdit }) {
         <Cpu size={10} className="text-gray-600 shrink-0" />
         <span className="text-[10px] font-mono text-gray-600">{agent.model}</span>
       </div>
+
+      {agentRoles.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {agentRoles.map(role => (
+            <span
+              key={role.id}
+              className="text-[9px] font-medium px-1.5 py-0.5 rounded-full border"
+              style={{ color: role.color, borderColor: role.color + '40', background: role.color + '18' }}
+            >
+              {role.name}
+            </span>
+          ))}
+        </div>
+      )}
 
       {agent.prompt_file && (
         <div>

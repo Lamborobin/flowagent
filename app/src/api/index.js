@@ -61,6 +61,10 @@ export const instructionsApi = {
   delete: (filename) => api.delete(`/instructions/${filename}`).then(r => r.data),
 };
 
+export const rolesApi = {
+  list: () => api.get('/roles').then(r => r.data),
+};
+
 export const agentTemplatesApi = {
   list: (includeArchived = false) =>
     api.get('/agent-templates', { params: { include_archived: includeArchived } }).then(r => r.data),

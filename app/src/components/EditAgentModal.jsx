@@ -4,7 +4,7 @@ import { useStore } from '../store';
 import {
   useAgentForm,
   NameField, ModelField, ColorField,
-  SystemPromptField, ContextFilesField, TemplatePromptField,
+  SystemPromptField, ContextFilesField, TemplatePromptField, RoleField,
 } from './AgentForm';
 import { instructionsApi } from '../api';
 
@@ -16,7 +16,7 @@ export default function EditAgentModal() {
     form, set,
     availableFiles,
     newPrompt, setNewPromptField,
-    toggleInstructionFile, resolvePromptFile,
+    toggleInstructionFile, resolvePromptFile, toggleRole,
   } = useAgentForm({
     name: agent.name,
     role: agent.role,
@@ -29,6 +29,7 @@ export default function EditAgentModal() {
     template_system_prompt: agent.template_system_prompt || '',
     system_prompt_override: agent.system_prompt_override ?? null,
     created_from_template_id: agent.created_from_template_id || null,
+    role_ids: agent.role_ids || [],
   });
 
   const [saving, setSaving] = useState(false);
@@ -71,6 +72,7 @@ export default function EditAgentModal() {
         instruction_files: form.instruction_files,
         color: form.color,
         template_system_prompt: form.template_system_prompt || null,
+        role_ids: form.role_ids.length > 0 ? form.role_ids : ['role_any'],
       };
       await updateAgent(agent.id, payload);
       close();
@@ -173,6 +175,8 @@ export default function EditAgentModal() {
           </div>
 
           <ModelField value={form.model} onChange={v => set('model', v)} />
+
+          <RoleField selectedRoleIds={form.role_ids} onToggle={toggleRole} />
 
           <TemplatePromptField
             form={form}

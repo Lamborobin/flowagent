@@ -1,11 +1,12 @@
 import { create } from 'zustand';
-import { tasksApi, columnsApi, agentsApi, secretsApi, agentTemplatesApi, instructionsApi } from '../api';
+import { tasksApi, columnsApi, agentsApi, secretsApi, agentTemplatesApi, instructionsApi, rolesApi } from '../api';
 
 export const useStore = create((set, get) => ({
   columns: [],
   tasks: [],
   archivedTasks: [],
   agents: [],
+  roles: [],
   secrets: [],
   agentTemplates: [],
   instructionFiles: [],
@@ -24,14 +25,15 @@ export const useStore = create((set, get) => ({
   async load() {
     set({ loading: true });
     try {
-      const [columns, tasks, archivedTasks, agents, agentTemplates] = await Promise.all([
+      const [columns, tasks, archivedTasks, agents, agentTemplates, roles] = await Promise.all([
         columnsApi.list(true), // include archived so they can be restored
         tasksApi.list(),
         tasksApi.list({ include_archived: true }).then(all => all.filter(t => t.archived_at)),
         agentsApi.list(),
         agentTemplatesApi.list(true),
+        rolesApi.list(),
       ]);
-      set({ columns, tasks, archivedTasks, agents, agentTemplates, loading: false });
+      set({ columns, tasks, archivedTasks, agents, agentTemplates, roles, loading: false });
     } catch (e) {
       console.error('Load failed:', e);
       set({ loading: false });
@@ -94,8 +96,19 @@ export const useStore = create((set, get) => ({
   },
 
   async updateAgent(id, data) {
-    const updated = await agentsApi.update(id, data);
-    set(s => ({ agents: s.agents.map(a => a.id === id ? updated : a) }));
+    const res = await agentsApi.update(id, data);
+    const agent = res.agent ?? res;
+    const displacedTasks = res.displaced_tasks || [];
+    set(s => ({
+      agents: s.agents.map(a => a.id === id ? agent : a),
+      tasks: displacedTasks.length > 0
+        ? s.tasks.map(t => {
+            const d = displacedTasks.find(dt => dt.id === t.id);
+            return d ? { ...t, column_id: 'col_unassigned' } : t;
+          })
+        : s.tasks,
+    }));
+    return { agent, displacedCount: displacedTasks.length };
   },
 
   async archiveAgent(id) {
