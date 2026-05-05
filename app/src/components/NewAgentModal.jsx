@@ -81,7 +81,7 @@ export default function NewAgentModal() {
         permissions: ['task:read'],
         created_from_template_id: selectedTemplateId || undefined,
         template_system_prompt: form.template_system_prompt || null,
-        role_ids: form.role_ids.length > 0 ? form.role_ids : ['role_any'],
+        role_ids: form.role_ids,
       });
       setShowNewAgent(false);
     } catch (err) {

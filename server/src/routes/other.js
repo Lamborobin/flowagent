@@ -20,11 +20,13 @@ function parseAgent(a) {
   };
 }
 
-// Column role requirements (mirrors tasks.js)
-const COLUMN_ROLE_REQUIREMENTS = {
-  'col_backlog': ['role_pm'],
-  'col_inprogress': ['role_developer'],
-  'col_testing': ['role_tester'],
+// Column → required role_id (mirrors tasks.js)
+const COLUMN_ACCESS_MAP = {
+  'col_backlog':     'role_access_backlog',
+  'col_inprogress':  'role_access_inprogress',
+  'col_testing':     'role_access_testing',
+  'col_humanaction': 'role_access_humanaction',
+  'col_done':        'role_access_done',
 };
 
 function parseTemplate(t) {
@@ -151,14 +153,14 @@ agentsRouter.patch('/:id', (req, res) => {
       "SELECT * FROM tasks WHERE assigned_agent_id = ? AND archived_at IS NULL AND column_id != 'col_unassigned'"
     ).all(agent.id);
     for (const task of assignedTasks) {
-      const requiredRoles = COLUMN_ROLE_REQUIREMENTS[task.column_id];
-      if (!requiredRoles) continue; // custom column — no restriction
-      const hasRole = newRoleIds.includes('role_any') || requiredRoles.some(r => newRoleIds.includes(r));
-      if (!hasRole) {
+      const requiredRole = COLUMN_ACCESS_MAP[task.column_id];
+      if (!requiredRole) continue; // custom column — no restriction
+      const hasAccess = newRoleIds.includes('role_access_any') || newRoleIds.includes(requiredRole);
+      if (!hasAccess) {
         db.prepare('UPDATE tasks SET column_id = ? WHERE id = ?').run('col_unassigned', task.id);
         db.prepare(`INSERT INTO task_logs (id, task_id, agent_id, action, from_column, to_column, message) VALUES (?, ?, ?, ?, ?, ?, ?)`)
           .run(uuidv4(), task.id, null, 'moved', task.column_id, 'col_unassigned',
-            'Moved to Unassigned — assigned agent lost required role for this column');
+            'Moved to Unassigned — assigned agent lost column access for this column');
         const displaced = db.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id);
         displacedTasks.push({
           ...displaced,
@@ -653,10 +655,17 @@ agentTemplatesRouter.delete('/:id', (req, res) => {
 // ── Roles ─────────────────────────────────────────────────────────────────────
 const rolesRouter = express.Router();
 
+function parseRole(r) {
+  return { ...r, allowed_column_ids: JSON.parse(r.allowed_column_ids || '[]') };
+}
+
+// Order: column_access first (by name), then permissions (by name)
 rolesRouter.get('/', (req, res) => {
   const db = getDb();
-  const roles = db.prepare('SELECT * FROM roles ORDER BY name ASC').all();
-  res.json(roles.map(r => ({ ...r, allowed_column_ids: JSON.parse(r.allowed_column_ids || '[]') })));
+  const roles = db.prepare(
+    "SELECT * FROM roles ORDER BY CASE type WHEN 'column_access' THEN 0 ELSE 1 END, name ASC"
+  ).all();
+  res.json(roles.map(parseRole));
 });
 
 module.exports = { agentsRouter, columnsRouter, secretsRouter, instructionsRouter, agentTemplatesRouter, rolesRouter };

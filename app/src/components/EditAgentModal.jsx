@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, Save, Trash2, Archive, LayoutTemplate, Check } from 'lucide-react';
+import { X, Save, Trash2, Archive, LayoutTemplate, Check, AlertCircle } from 'lucide-react';
 import { useStore } from '../store';
 import {
   useAgentForm,
@@ -8,8 +8,21 @@ import {
 } from './AgentForm';
 import { instructionsApi } from '../api';
 
+// Column → required role_id (mirrors backend)
+const COLUMN_ACCESS_MAP = {
+  col_backlog:     'role_access_backlog',
+  col_inprogress:  'role_access_inprogress',
+  col_testing:     'role_access_testing',
+  col_humanaction: 'role_access_humanaction',
+  col_done:        'role_access_done',
+};
+const COLUMN_NAMES = {
+  col_backlog: 'Backlog', col_inprogress: 'In Progress', col_testing: 'Testing',
+  col_humanaction: 'Human Action', col_done: 'Done', col_unassigned: 'Unassigned',
+};
+
 export default function EditAgentModal() {
-  const { editingAgent, updateAgent, deleteAgent, archiveAgent, saveAgentAsTemplate, agentTemplates, setEditingAgent } = useStore();
+  const { editingAgent, updateAgent, deleteAgent, archiveAgent, saveAgentAsTemplate, agentTemplates, setEditingAgent, tasks } = useStore();
   const agent = editingAgent;
 
   const {
@@ -36,6 +49,7 @@ export default function EditAgentModal() {
   const [confirming, setConfirming] = useState(false);
   const [confirmingArchive, setConfirmingArchive] = useState(false);
   const [error, setError] = useState('');
+  const [displacementWarning, setDisplacementWarning] = useState(null); // { tasks: [] } | null
 
   // Dismiss confirmation chips on any keypress
   useEffect(() => {
@@ -57,11 +71,22 @@ export default function EditAgentModal() {
 
   function close() { setEditingAgent(null); }
 
-  async function handleSubmit(e) {
-    e.preventDefault();
-    if (!form.name.trim()) return;
+  function getDisplacedTasks(newRoleIds) {
+    return tasks.filter(t => {
+      if (t.assigned_agent_id !== agent.id) return false;
+      if (t.archived_at) return false;
+      if (t.column_id === 'col_unassigned') return false;
+      if (newRoleIds.includes('role_access_any')) return false;
+      const requiredRole = COLUMN_ACCESS_MAP[t.column_id];
+      if (!requiredRole) return false;
+      return !newRoleIds.includes(requiredRole);
+    });
+  }
+
+  async function doSave() {
     setSaving(true);
     setError('');
+    setDisplacementWarning(null);
     try {
       const promptFilePath = await resolvePromptFile();
       const payload = {
@@ -72,7 +97,7 @@ export default function EditAgentModal() {
         instruction_files: form.instruction_files,
         color: form.color,
         template_system_prompt: form.template_system_prompt || null,
-        role_ids: form.role_ids.length > 0 ? form.role_ids : ['role_any'],
+        role_ids: form.role_ids,
       };
       await updateAgent(agent.id, payload);
       close();
@@ -81,6 +106,20 @@ export default function EditAgentModal() {
     } finally {
       setSaving(false);
     }
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!form.name.trim()) return;
+
+    // Check if column access roles were reduced → tasks may be displaced
+    const displaced = getDisplacedTasks(form.role_ids);
+    if (displaced.length > 0 && !displacementWarning) {
+      setDisplacementWarning({ tasks: displaced });
+      return;
+    }
+
+    await doSave();
   }
 
   async function handleArchiveAgent() {
@@ -240,6 +279,39 @@ export default function EditAgentModal() {
               <LayoutTemplate size={12} />
               {templateSaved ? 'Saved as template' : 'Save as template'}
             </button>
+          )}
+
+          {/* Displacement warning */}
+          {displacementWarning && (
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 space-y-2.5">
+              <div className="flex items-start gap-2">
+                <AlertCircle size={13} className="text-amber-400 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-xs font-medium text-amber-300">Column access removed — tasks will be displaced</p>
+                  <p className="text-[10px] text-amber-400/80 mt-0.5">
+                    {displacementWarning.tasks.length} task{displacementWarning.tasks.length > 1 ? 's' : ''} assigned to this agent will be moved to Unassigned:
+                  </p>
+                  <ul className="mt-1.5 space-y-0.5 max-h-32 overflow-y-auto">
+                    {displacementWarning.tasks.map(t => (
+                      <li key={t.id} className="text-[10px] text-amber-400 flex items-center gap-2">
+                        <span className="font-mono text-[9px] text-amber-500/70 shrink-0">{COLUMN_NAMES[t.column_id] || t.column_id}</span>
+                        <span className="truncate">{t.title}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => setDisplacementWarning(null)}
+                  className="flex-1 py-1.5 text-xs rounded-lg border border-border text-gray-400 hover:text-gray-200 transition-colors">
+                  Cancel
+                </button>
+                <button type="button" onClick={doSave} disabled={saving}
+                  className="flex-1 py-1.5 text-xs font-medium bg-amber-500/20 border border-amber-500/40 text-amber-300 rounded-lg hover:bg-amber-500/30 transition-colors disabled:opacity-40">
+                  {saving ? 'Saving…' : 'Save & Move to Unassigned'}
+                </button>
+              </div>
+            </div>
           )}
 
           {error && (

@@ -312,16 +312,47 @@ function initDb() {
     );
   `);
 
-  // Seed system roles (idempotent)
+  // Migration: add type column to roles if missing
+  const roleCols = db.prepare('PRAGMA table_info(roles)').all().map(c => c.name);
+  if (!roleCols.includes('type')) {
+    db.exec("ALTER TABLE roles ADD COLUMN type TEXT DEFAULT 'column_access'");
+    console.log('✅ Migrated: added type to roles');
+  }
+
+  // Remove old role system (4 generic roles) and replace with column-per-role + permission roles
+  db.prepare("DELETE FROM roles WHERE id IN ('role_pm','role_developer','role_tester','role_any')").run();
+
+  // Column access roles — one per workable column
   const insertRoleIfMissing = db.prepare(
-    `INSERT OR IGNORE INTO roles (id, name, description, allowed_column_ids, color, is_system) VALUES (?, ?, ?, ?, ?, 1)`
+    `INSERT OR IGNORE INTO roles (id, name, description, allowed_column_ids, color, is_system, type) VALUES (?, ?, ?, ?, ?, 1, ?)`
   );
   [
-    ['role_pm',        'Project Manager', 'Can be assigned to Backlog tasks',      JSON.stringify(['col_backlog']),     '#6366f1'],
-    ['role_developer', 'Developer',       'Can be assigned to In Progress tasks',  JSON.stringify(['col_inprogress']),  '#3b82f6'],
-    ['role_tester',    'Tester',          'Can be assigned to Testing tasks',       JSON.stringify(['col_testing']),     '#8b5cf6'],
-    ['role_any',       'General',         'Can be assigned to any column',          JSON.stringify([]),                  '#6b7280'],
+    ['role_access_backlog',     'Backlog',      'Can be assigned to Backlog tasks',       JSON.stringify(['col_backlog']),     '#64748b', 'column_access'],
+    ['role_access_inprogress',  'In Progress',  'Can be assigned to In Progress tasks',   JSON.stringify(['col_inprogress']),  '#3b82f6', 'column_access'],
+    ['role_access_testing',     'Testing',      'Can be assigned to Testing tasks',        JSON.stringify(['col_testing']),     '#8b5cf6', 'column_access'],
+    ['role_access_humanaction', 'Human Action', 'Can be assigned to Human Action tasks',  JSON.stringify(['col_humanaction']), '#f59e0b', 'column_access'],
+    ['role_access_done',        'Done',         'Can be assigned to Done tasks',           JSON.stringify(['col_done']),        '#10b981', 'column_access'],
+    ['role_access_any',         'All Columns',  'Can be assigned to any column',           JSON.stringify([]),                  '#6b7280', 'column_access'],
   ].forEach(r => insertRoleIfMissing.run(...r));
+
+  // Permission roles — what kind of work the agent can perform
+  [
+    ['perm_coding',          'Coding',           'Creates and modifies code',                                                            '#ec4899', 'permission'],
+    ['perm_coding_tester',   'Coding Tester',    'Tests code — debugging, unit tests, integration tests',                               '#8b5cf6', 'permission'],
+    ['perm_code_reader',     'Code Reader',      'Reads and understands code but cannot modify it',                                     '#64748b', 'permission'],
+    ['perm_architect',       'Architect',        'Designs system foundations and high-level structure',                                 '#6366f1', 'permission'],
+    ['perm_migrate',         'Migration',        'Handles data migrations — only affected areas, no wider code changes',                '#f59e0b', 'permission'],
+    ['perm_frontend',        'Frontend',         'Frontend code changes only',                                                          '#06b6d4', 'permission'],
+    ['perm_backend',         'Backend',          'Backend code changes only',                                                           '#3b82f6', 'permission'],
+    ['perm_ux',              'UX',               'Frontend UX-specialised tasks only',                                                  '#ec4899', 'permission'],
+    ['perm_network',         'Network',          'Network testing and external commands, locally or outside the project',               '#10b981', 'permission'],
+    ['perm_cloud',           'Cloud',            'Cloud environment access — checks app health, operates cloud safely',                 '#0ea5e9', 'permission'],
+    ['perm_security_control','Security Control', 'Security analysis, vulnerability scanning, .env usage review, no modifications',      '#ef4444', 'permission'],
+    ['perm_log_reader',      'Log Reader',       'Reads logs in the file system and cloud (when cloud is enabled)',                     '#f97316', 'permission'],
+    ['perm_data_analytic',   'Data Analytics',   'Extracts and analyses data from appropriate areas of the app',                       '#84cc16', 'permission'],
+  ].forEach(([id, name, description, color, type]) =>
+    insertRoleIfMissing.run(id, name, description, '[]', color, type)
+  );
 
   // Migration: add role_ids to agents
   if (!agentColNames.includes('role_ids')) {
@@ -329,16 +360,27 @@ function initDb() {
     console.log('✅ Migrated: added role_ids to agents');
   }
 
-  // Migration: set default role_ids for existing agents (idempotent)
-  const agentsForRoles = db.prepare("SELECT id, role_ids FROM agents").all();
-  const setDefaultRoles = db.prepare("UPDATE agents SET role_ids = ? WHERE id = ? AND (role_ids IS NULL OR role_ids = '[]')");
-  for (const a of agentsForRoles) {
-    if ((a.role_ids || '[]') !== '[]') continue;
-    const defaults = a.id === 'agent_pm'   ? ['role_pm']
-                   : a.id === 'agent_dev'  ? ['role_developer']
-                   : a.id === 'agent_test' ? ['role_tester']
-                   : ['role_any'];
-    setDefaultRoles.run(JSON.stringify(defaults), a.id);
+  // Migration: map old role IDs to new column access role IDs (idempotent)
+  const OLD_TO_NEW = {
+    'role_pm':        'role_access_backlog',
+    'role_developer': 'role_access_inprogress',
+    'role_tester':    'role_access_testing',
+    'role_any':       'role_access_any',
+  };
+  const migrateRoleIds = db.prepare('UPDATE agents SET role_ids = ? WHERE id = ?');
+  const allAgentsForRoles = db.prepare('SELECT id, role_ids FROM agents').all();
+  for (const a of allAgentsForRoles) {
+    const current = JSON.parse(a.role_ids || '[]');
+    const migrated = [...new Set(current.map(r => OLD_TO_NEW[r] || r))];
+    // Set defaults for agents with empty role_ids
+    const final = migrated.length > 0 ? migrated
+      : a.id === 'agent_pm'   ? ['role_access_backlog']
+      : a.id === 'agent_dev'  ? ['role_access_inprogress']
+      : a.id === 'agent_test' ? ['role_access_testing']
+      : ['role_access_any'];
+    if (JSON.stringify(current) !== JSON.stringify(final)) {
+      migrateRoleIds.run(JSON.stringify(final), a.id);
+    }
   }
 
   // Seed col_unassigned (idempotent — only added when missing)

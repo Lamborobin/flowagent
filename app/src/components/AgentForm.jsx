@@ -45,7 +45,7 @@ export function useAgentForm(initial = {}) {
     template_system_prompt: '',
     system_prompt_override: null,
     created_from_template_id: null,
-    role_ids: [],
+    role_ids: ['role_access_any'],
     ...initial,
   });
   const [generatedRole, setGeneratedRole] = useState(initial.role || '');
@@ -280,60 +280,117 @@ export function TemplatePromptField({ form, onChange }) {
   );
 }
 
-export function RoleField({ selectedRoleIds, onToggle }) {
-  const { roles } = useStore();
-
-  const COLUMN_LABELS = {
-    col_backlog: 'Backlog',
-    col_inprogress: 'In Progress',
-    col_testing: 'Testing',
-  };
-
+function RoleCheckbox({ checked, onToggle, color, label, badge }) {
   return (
-    <div>
-      <div className="flex items-center gap-1.5 mb-1">
-        <label className="text-xs font-medium text-gray-400">Column Access</label>
-        <span className="text-[10px] text-gray-600">· determines which columns this agent can work in</span>
-      </div>
-      <div className="space-y-1.5 bg-surface-3 border border-border rounded-lg p-3">
-        {roles.map(role => {
-          const checked = selectedRoleIds.includes(role.id);
-          const colLabels = role.allowed_column_ids.map(id => COLUMN_LABELS[id] || id).filter(Boolean);
-          return (
-            <label key={role.id} className="flex items-center gap-2.5 cursor-pointer group">
-              <div
-                onClick={() => onToggle(role.id)}
-                className={`w-4 h-4 rounded border flex items-center justify-center transition-colors shrink-0 ${
-                  checked ? 'border-accent bg-accent' : 'border-border bg-surface-1 group-hover:border-accent/50'
-                }`}
-              >
-                {checked && (
-                  <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 12 12">
-                    <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
-                )}
-              </div>
-              <div className="w-2 h-2 rounded-full shrink-0" style={{ background: role.color }} />
-              <span className="text-xs text-gray-400 group-hover:text-gray-300 flex-1">{role.name}</span>
-              {colLabels.length > 0 ? (
-                <span className="text-[9px] font-mono text-gray-600 bg-surface-1 border border-border px-1.5 py-0.5 rounded shrink-0">
-                  {colLabels.join(', ')}
-                </span>
-              ) : (
-                <span className="text-[9px] font-mono text-gray-600 bg-surface-1 border border-border px-1.5 py-0.5 rounded shrink-0">
-                  any column
-                </span>
-              )}
-            </label>
-          );
-        })}
-        {roles.length === 0 && (
-          <p className="text-[10px] text-gray-600 italic">No roles available.</p>
+    <label className="flex items-center gap-2.5 cursor-pointer group">
+      <div
+        onClick={onToggle}
+        className={`w-4 h-4 rounded border flex items-center justify-center transition-colors shrink-0 ${
+          checked ? 'border-accent bg-accent' : 'border-border bg-surface-1 group-hover:border-accent/50'
+        }`}
+      >
+        {checked && (
+          <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 12 12">
+            <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
         )}
       </div>
-      <p className="mt-1 text-[10px] text-gray-600">
-        System roles cannot be deleted. Removing a column-specific role displaces any assigned tasks to Unassigned.
-      </p>
+      <div className="w-2 h-2 rounded-full shrink-0" style={{ background: color }} />
+      <span className="text-xs text-gray-400 group-hover:text-gray-300 flex-1">{label}</span>
+      {badge && (
+        <span className="text-[9px] font-mono text-gray-600 bg-surface-1 border border-border px-1.5 py-0.5 rounded shrink-0">
+          {badge}
+        </span>
+      )}
+    </label>
+  );
+}
+
+export function RoleField({ selectedRoleIds, onToggle }) {
+  const { roles } = useStore();
+  const [showCapabilities, setShowCapabilities] = useState(false);
+
+  const columnRoles = roles.filter(r => r.type === 'column_access');
+  const permissionRoles = roles.filter(r => r.type === 'permission');
+
+  const allColumnsChecked = selectedRoleIds.includes('role_access_any');
+
+  function handleAllColumnsToggle() {
+    onToggle('role_access_any');
+  }
+
+  return (
+    <div className="space-y-3">
+      {/* Column Access */}
+      <div>
+        <div className="flex items-center gap-1.5 mb-1.5">
+          <label className="text-xs font-medium text-gray-400">Column Access</label>
+          <span className="text-[10px] text-gray-600">· which columns this agent can be assigned to</span>
+        </div>
+        <div className="bg-surface-3 border border-border rounded-lg p-3 space-y-1.5">
+          {/* All Columns toggle first */}
+          {columnRoles.filter(r => r.id === 'role_access_any').map(role => (
+            <RoleCheckbox
+              key={role.id}
+              checked={selectedRoleIds.includes(role.id)}
+              onToggle={() => onToggle(role.id)}
+              color={role.color}
+              label={role.name}
+              badge="all"
+            />
+          ))}
+          {/* Divider */}
+          <div className="border-t border-border my-1 opacity-50" />
+          {/* Individual column roles — dimmed when All Columns is on */}
+          {columnRoles.filter(r => r.id !== 'role_access_any').map(role => (
+            <div key={role.id} className={allColumnsChecked ? 'opacity-40 pointer-events-none' : ''}>
+              <RoleCheckbox
+                checked={selectedRoleIds.includes(role.id)}
+                onToggle={() => onToggle(role.id)}
+                color={role.color}
+                label={role.name}
+              />
+            </div>
+          ))}
+        </div>
+        <p className="mt-1 text-[10px] text-gray-600">
+          Removing a column access role moves assigned tasks in that column to Unassigned.
+        </p>
+      </div>
+
+      {/* Capabilities (permission roles) */}
+      <div>
+        <button
+          type="button"
+          onClick={() => setShowCapabilities(v => !v)}
+          className="flex items-center gap-1.5 text-xs font-medium text-gray-400 hover:text-gray-300 transition-colors w-full"
+        >
+          <svg className={`w-3 h-3 transition-transform ${showCapabilities ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 12 12">
+            <path d="M4 2l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+          Capabilities
+          <span className="text-[10px] text-gray-600 font-normal ml-0.5">· what this agent is allowed to do</span>
+          {permissionRoles.some(r => selectedRoleIds.includes(r.id)) && (
+            <span className="ml-auto text-[10px] font-mono text-accent">
+              {permissionRoles.filter(r => selectedRoleIds.includes(r.id)).length} selected
+            </span>
+          )}
+        </button>
+        {showCapabilities && (
+          <div className="mt-1.5 bg-surface-3 border border-border rounded-lg p-3 space-y-1.5">
+            {permissionRoles.map(role => (
+              <RoleCheckbox
+                key={role.id}
+                checked={selectedRoleIds.includes(role.id)}
+                onToggle={() => onToggle(role.id)}
+                color={role.color}
+                label={role.name}
+                badge={null}
+              />
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

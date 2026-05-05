@@ -49,23 +49,22 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // Role-based column assignment validation (mirrors API enforcement)
-  const COLUMN_ROLE_REQUIREMENTS = {
-    col_backlog: ['role_pm'],
-    col_inprogress: ['role_developer'],
-    col_testing: ['role_tester'],
+  // Column → required role_id (mirrors API enforcement)
+  const COLUMN_ACCESS_MAP = {
+    col_backlog:     'role_access_backlog',
+    col_inprogress:  'role_access_inprogress',
+    col_testing:     'role_access_testing',
+    col_humanaction: 'role_access_humanaction',
+    col_done:        'role_access_done',
   };
-  const HUMAN_ONLY = ['col_humanaction', 'col_humanreview', 'col_done'];
 
   function canAssignAgent(agent, columnId) {
     if (!agent || agent.id === 'human') return true;
     if (columnId === 'col_unassigned') return true;
-    if (HUMAN_ONLY.includes(columnId)) return false;
-    const required = COLUMN_ROLE_REQUIREMENTS[columnId];
-    if (!required) return true; // custom column
+    const requiredRole = COLUMN_ACCESS_MAP[columnId];
+    if (!requiredRole) return true; // custom column — no restriction
     const roleIds = agent.role_ids || [];
-    if (roleIds.includes('role_any')) return true;
-    return required.some(r => roleIds.includes(r));
+    return roleIds.includes('role_access_any') || roleIds.includes(requiredRole);
   }
 
   function handleDragStart({ active }) {

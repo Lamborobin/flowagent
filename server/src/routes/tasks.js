@@ -12,25 +12,24 @@ const COLUMN_AGENT_TRIGGERS = {
   'col_inprogress': 'agent_dev',
 };
 
-// Role-based column assignment validation
-const COLUMN_ROLE_REQUIREMENTS = {
-  'col_backlog': ['role_pm'],
-  'col_inprogress': ['role_developer'],
-  'col_testing': ['role_tester'],
+// Column → required role_id for agent assignment
+const COLUMN_ACCESS_MAP = {
+  'col_backlog':     'role_access_backlog',
+  'col_inprogress':  'role_access_inprogress',
+  'col_testing':     'role_access_testing',
+  'col_humanaction': 'role_access_humanaction',
+  'col_done':        'role_access_done',
 };
-const HUMAN_ONLY_COLUMNS = ['col_humanaction', 'col_humanreview', 'col_done'];
 
 function canAgentBeInColumn(agentId, columnId, db) {
   if (!agentId || agentId === 'human') return true;
   if (columnId === 'col_unassigned') return true;
-  if (HUMAN_ONLY_COLUMNS.includes(columnId)) return false;
-  const requiredRoles = COLUMN_ROLE_REQUIREMENTS[columnId];
-  if (!requiredRoles) return true; // custom column — no restriction
+  const requiredRole = COLUMN_ACCESS_MAP[columnId];
+  if (!requiredRole) return true; // custom column — no restriction
   const agent = db.prepare('SELECT role_ids FROM agents WHERE id = ?').get(agentId);
   if (!agent) return false;
   const agentRoleIds = JSON.parse(agent.role_ids || '[]');
-  if (agentRoleIds.includes('role_any')) return true;
-  return requiredRoles.some(r => agentRoleIds.includes(r));
+  return agentRoleIds.includes('role_access_any') || agentRoleIds.includes(requiredRole);
 }
 
 // Helper: task is locked when it has a PM planning process underway and not yet fully approved
