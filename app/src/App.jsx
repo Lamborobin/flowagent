@@ -16,7 +16,7 @@ import SettingsPage from './components/SettingsPage';
 const PRESET_COLORS = ['#6366f1','#3b82f6','#8b5cf6','#f59e0b','#10b981','#ef4444','#ec4899','#14b8a6','#f97316','#64748b'];
 
 export default function App() {
-  const { columns, tasks, agents, loading, load, moveTask, updateTask, selectedTask, showNewTask, showNewAgent, showTemplates, editingAgent, unarchiveColumn, deleteColumn, createColumn, updateColumn, reorderColumnsLocally, currentPage, theme, setDraggingAgent } = useStore();
+  const { columns, tasks, agents, roles, loading, load, moveTask, updateTask, selectedTask, showNewTask, showNewAgent, showTemplates, editingAgent, unarchiveColumn, deleteColumn, createColumn, updateColumn, reorderColumnsLocally, currentPage, theme, setDraggingAgent } = useStore();
   const [dragging, setDragging] = useState(null);
   const [dragError, setDragError] = useState('');
   const [dragSuccess, setDragSuccess] = useState('');
