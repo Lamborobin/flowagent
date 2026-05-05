@@ -1,4 +1,8 @@
+import { useState } from 'react'
+
 export default function Header({ cartCount = 0, activeCategory, onNavigate }) {
+  const [exploreOpen, setExploreOpen] = useState(false)
+
   const navItems = [
     { label: 'Women', category: 'Clothing', filter: (p) => p.tags?.includes('women') },
     { label: 'Men', category: 'Clothing', filter: (p) => p.tags?.includes('men') },
@@ -27,6 +31,31 @@ export default function Header({ cartCount = 0, activeCategory, onNavigate }) {
               {label}
             </button>
           ))}
+          
+          {/* Explore dropdown */}
+          <div className="relative">
+            <button
+              onClick={() => setExploreOpen(!exploreOpen)}
+              className="hover:text-gray-900 transition-colors"
+            >
+              Explore
+            </button>
+            {exploreOpen && (
+              <div className="absolute top-full left-0 mt-2 bg-white border border-gray-100 shadow-lg rounded py-2 min-w-[140px]">
+                <button
+                  onClick={() => {
+                    onNavigate('Outdoor')
+                    setExploreOpen(false)
+                  }}
+                  className={`w-full text-left px-4 py-2 hover:bg-gray-50 text-sm ${
+                    activeCategory === 'Outdoor' ? 'text-gray-900 font-medium' : 'text-gray-500'
+                  }`}
+                >
+                  Outdoor
+                </button>
+              </div>
+            )}
+          </div>
         </nav>
         <button className="text-sm relative">
           Bag
@@ -51,6 +80,33 @@ export default function Header({ cartCount = 0, activeCategory, onNavigate }) {
             {label}
           </button>
         ))}
+        
+        {/* Mobile Explore dropdown */}
+        <div className="relative">
+          <button
+            onClick={() => setExploreOpen(!exploreOpen)}
+            className={`hover:text-gray-900 transition-colors ${
+              activeCategory === 'Outdoor' ? 'text-gray-900 font-medium' : ''
+            }`}
+          >
+            Explore
+          </button>
+          {exploreOpen && (
+            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 bg-white border border-gray-100 shadow-lg rounded py-2 min-w-[140px]">
+              <button
+                onClick={() => {
+                  onNavigate('Outdoor')
+                  setExploreOpen(false)
+                }}
+                className={`w-full text-left px-4 py-2 hover:bg-gray-50 text-xs ${
+                  activeCategory === 'Outdoor' ? 'text-gray-900 font-medium' : 'text-gray-500'
+                }`}
+              >
+                Outdoor
+              </button>
+            </div>
+          )}
+        </div>
       </nav>
     </header>
   )
