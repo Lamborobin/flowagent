@@ -383,6 +383,19 @@ function initDb() {
     }
   }
 
+  // Migration: create column_access roles for any existing custom columns
+  const systemColIds = ['col_backlog','col_inprogress','col_testing','col_humanaction','col_done','col_unassigned'];
+  const customCols = db.prepare(
+    `SELECT id, name FROM columns WHERE id NOT IN (${systemColIds.map(() => '?').join(',')}) AND archived_at IS NULL`
+  ).all(...systemColIds);
+  const ensureColRole = db.prepare(
+    `INSERT OR IGNORE INTO roles (id, name, description, allowed_column_ids, color, is_system, type) VALUES (?, ?, ?, ?, '#6b7280', 0, 'column_access')`
+  );
+  for (const col of customCols) {
+    const roleId = 'role_' + col.id.replace(/^col_/, '');
+    ensureColRole.run(roleId, col.name, `Can be assigned to ${col.name} tasks`, JSON.stringify([col.id]));
+  }
+
   // Seed col_unassigned (idempotent — only added when missing)
   db.prepare(
     `INSERT OR IGNORE INTO columns (id, name, position, color, is_protected) VALUES ('col_unassigned', 'Unassigned', -1, '#f59e0b', 1)`

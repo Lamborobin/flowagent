@@ -8,21 +8,8 @@ import {
 } from './AgentForm';
 import { instructionsApi } from '../api';
 
-// Column → required role_id (mirrors backend)
-const COLUMN_ACCESS_MAP = {
-  col_backlog:     'role_access_backlog',
-  col_inprogress:  'role_access_inprogress',
-  col_testing:     'role_access_testing',
-  col_humanaction: 'role_access_humanaction',
-  col_done:        'role_access_done',
-};
-const COLUMN_NAMES = {
-  col_backlog: 'Backlog', col_inprogress: 'In Progress', col_testing: 'Testing',
-  col_humanaction: 'Human Action', col_done: 'Done', col_unassigned: 'Unassigned',
-};
-
 export default function EditAgentModal() {
-  const { editingAgent, updateAgent, deleteAgent, archiveAgent, saveAgentAsTemplate, agentTemplates, setEditingAgent, tasks } = useStore();
+  const { editingAgent, updateAgent, deleteAgent, archiveAgent, saveAgentAsTemplate, agentTemplates, setEditingAgent, tasks, roles, columns } = useStore();
   const agent = editingAgent;
 
   const {
@@ -72,14 +59,16 @@ export default function EditAgentModal() {
   function close() { setEditingAgent(null); }
 
   function getDisplacedTasks(newRoleIds) {
+    if (newRoleIds.includes('role_access_any')) return [];
     return tasks.filter(t => {
       if (t.assigned_agent_id !== agent.id) return false;
       if (t.archived_at) return false;
       if (t.column_id === 'col_unassigned') return false;
-      if (newRoleIds.includes('role_access_any')) return false;
-      const requiredRole = COLUMN_ACCESS_MAP[t.column_id];
-      if (!requiredRole) return false;
-      return !newRoleIds.includes(requiredRole);
+      const coveringRoles = roles.filter(r =>
+        r.type === 'column_access' && (r.allowed_column_ids || []).includes(t.column_id)
+      );
+      if (coveringRoles.length === 0) return false;
+      return !coveringRoles.some(r => newRoleIds.includes(r.id));
     });
   }
 
@@ -294,7 +283,7 @@ export default function EditAgentModal() {
                   <ul className="mt-1.5 space-y-0.5 max-h-32 overflow-y-auto">
                     {displacementWarning.tasks.map(t => (
                       <li key={t.id} className="text-[10px] text-amber-400 flex items-center gap-2">
-                        <span className="font-mono text-[9px] text-amber-500/70 shrink-0">{COLUMN_NAMES[t.column_id] || t.column_id}</span>
+                        <span className="font-mono text-[9px] text-amber-500/70 shrink-0">{columns.find(c => c.id === t.column_id)?.name || t.column_id}</span>
                         <span className="truncate">{t.title}</span>
                       </li>
                     ))}

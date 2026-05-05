@@ -124,7 +124,8 @@ export const useStore = create((set, get) => ({
   // Columns
   async createColumn(data) {
     const col = await columnsApi.create(data);
-    set(s => ({ columns: [...s.columns, col] }));
+    const roles = await rolesApi.list();
+    set(s => ({ columns: [...s.columns, col], roles }));
   },
 
   async updateColumn(id, data) {
@@ -159,7 +160,8 @@ export const useStore = create((set, get) => ({
 
   async deleteColumn(id) {
     await columnsApi.delete(id);
-    set(s => ({ columns: s.columns.filter(c => c.id !== id) }));
+    const roles = await rolesApi.list();
+    set(s => ({ columns: s.columns.filter(c => c.id !== id), roles }));
   },
 
   // Agent Templates

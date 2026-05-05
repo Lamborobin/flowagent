@@ -20,14 +20,20 @@ function parseAgent(a) {
   };
 }
 
-// Column → required role_id (mirrors tasks.js)
-const COLUMN_ACCESS_MAP = {
-  'col_backlog':     'role_access_backlog',
-  'col_inprogress':  'role_access_inprogress',
-  'col_testing':     'role_access_testing',
-  'col_humanaction': 'role_access_humanaction',
-  'col_done':        'role_access_done',
-};
+// Build a live map of columnId → [roleId, ...] from the roles table
+function buildColumnRoleMap(db) {
+  const map = {};
+  const roles = db.prepare("SELECT id, allowed_column_ids FROM roles WHERE type = 'column_access'").all();
+  for (const r of roles) {
+    try {
+      for (const colId of JSON.parse(r.allowed_column_ids || '[]')) {
+        if (!map[colId]) map[colId] = [];
+        map[colId].push(r.id);
+      }
+    } catch {}
+  }
+  return map;
+}
 
 function parseTemplate(t) {
   return {
@@ -149,13 +155,14 @@ agentsRouter.patch('/:id', (req, res) => {
   let displacedTasks = [];
   if (role_ids !== undefined) {
     const newRoleIds = role_ids;
+    const colRoleMap = buildColumnRoleMap(db);
     const assignedTasks = db.prepare(
       "SELECT * FROM tasks WHERE assigned_agent_id = ? AND archived_at IS NULL AND column_id != 'col_unassigned'"
     ).all(agent.id);
     for (const task of assignedTasks) {
-      const requiredRole = COLUMN_ACCESS_MAP[task.column_id];
-      if (!requiredRole) continue; // custom column — no restriction
-      const hasAccess = newRoleIds.includes('role_access_any') || newRoleIds.includes(requiredRole);
+      const coveringRoles = colRoleMap[task.column_id] || [];
+      if (coveringRoles.length === 0) continue; // no restriction on this column
+      const hasAccess = newRoleIds.includes('role_access_any') || coveringRoles.some(r => newRoleIds.includes(r));
       if (!hasAccess) {
         db.prepare('UPDATE tasks SET column_id = ? WHERE id = ?').run('col_unassigned', task.id);
         db.prepare(`INSERT INTO task_logs (id, task_id, agent_id, action, from_column, to_column, message) VALUES (?, ?, ?, ?, ?, ?, ?)`)
@@ -246,6 +253,13 @@ columnsRouter.post('/', (req, res) => {
   const id = 'col_' + name.toLowerCase().replace(/[^a-z0-9]/g, '') + '_' + Date.now();
 
   db.prepare('INSERT INTO columns (id, name, position, color) VALUES (?, ?, ?, ?)').run(id, name, position, color);
+
+  // Create a non-system column_access role for this column
+  const roleId = 'role_' + id.replace(/^col_/, '');
+  db.prepare(
+    `INSERT OR IGNORE INTO roles (id, name, description, allowed_column_ids, color, is_system, type) VALUES (?, ?, ?, ?, '#6b7280', 0, 'column_access')`
+  ).run(roleId, name, `Can be assigned to ${name} tasks`, JSON.stringify([id]));
+
   res.status(201).json(db.prepare('SELECT * FROM columns WHERE id = ?').get(id));
 });
 
@@ -307,6 +321,11 @@ columnsRouter.delete('/:id', (req, res) => {
   }
 
   db.prepare('DELETE FROM columns WHERE id = ?').run(req.params.id);
+
+  // Remove the column's access role (non-system roles only)
+  const deletedRoleId = 'role_' + req.params.id.replace(/^col_/, '');
+  db.prepare("DELETE FROM roles WHERE id = ? AND is_system = 0").run(deletedRoleId);
+
   res.json({ ok: true, deleted: true });
 });
 

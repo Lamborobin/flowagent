@@ -50,22 +50,17 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // Column → required role_id (mirrors API enforcement)
-  const COLUMN_ACCESS_MAP = {
-    col_backlog:     'role_access_backlog',
-    col_inprogress:  'role_access_inprogress',
-    col_testing:     'role_access_testing',
-    col_humanaction: 'role_access_humanaction',
-    col_done:        'role_access_done',
-  };
-
+  // Dynamic column access check — works for system and custom columns
   function canAssignAgent(agent, columnId) {
     if (!agent || agent.id === 'human') return true;
     if (columnId === 'col_unassigned') return true;
-    const requiredRole = COLUMN_ACCESS_MAP[columnId];
-    if (!requiredRole) return true; // custom column — no restriction
+    const coveringRoles = roles.filter(r =>
+      r.type === 'column_access' && (r.allowed_column_ids || []).includes(columnId)
+    );
+    if (coveringRoles.length === 0) return true; // no role restricts this column
     const roleIds = agent.role_ids || [];
-    return roleIds.includes('role_access_any') || roleIds.includes(requiredRole);
+    if (roleIds.includes('role_access_any')) return true;
+    return coveringRoles.some(r => roleIds.includes(r.id));
   }
 
   function handleDragStart({ active }) {

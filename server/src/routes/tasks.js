@@ -12,24 +12,22 @@ const COLUMN_AGENT_TRIGGERS = {
   'col_inprogress': 'agent_dev',
 };
 
-// Column → required role_id for agent assignment
-const COLUMN_ACCESS_MAP = {
-  'col_backlog':     'role_access_backlog',
-  'col_inprogress':  'role_access_inprogress',
-  'col_testing':     'role_access_testing',
-  'col_humanaction': 'role_access_humanaction',
-  'col_done':        'role_access_done',
-};
-
+// Dynamic role-based column access check — works for system and custom columns
 function canAgentBeInColumn(agentId, columnId, db) {
   if (!agentId || agentId === 'human') return true;
   if (columnId === 'col_unassigned') return true;
-  const requiredRole = COLUMN_ACCESS_MAP[columnId];
-  if (!requiredRole) return true; // custom column — no restriction
+  const columnRoles = db.prepare(
+    "SELECT id, allowed_column_ids FROM roles WHERE type = 'column_access'"
+  ).all().filter(r => {
+    try { return JSON.parse(r.allowed_column_ids || '[]').includes(columnId); }
+    catch { return false; }
+  });
+  if (columnRoles.length === 0) return true; // no role restricts this column
   const agent = db.prepare('SELECT role_ids FROM agents WHERE id = ?').get(agentId);
   if (!agent) return false;
   const agentRoleIds = JSON.parse(agent.role_ids || '[]');
-  return agentRoleIds.includes('role_access_any') || agentRoleIds.includes(requiredRole);
+  if (agentRoleIds.includes('role_access_any')) return true;
+  return columnRoles.some(r => agentRoleIds.includes(r.id));
 }
 
 // Helper: task is locked when it has a PM planning process underway and not yet fully approved
