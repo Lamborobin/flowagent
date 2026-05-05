@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { FileText, Plus, RotateCcw, Lock, Unlock } from 'lucide-react';
+import { FileText, Plus, Info } from 'lucide-react';
 import { instructionsApi } from '../api';
 
 export const MODELS = [
@@ -49,10 +49,6 @@ export function useAgentForm(initial = {}) {
   const [generatedRole, setGeneratedRole] = useState(initial.role || '');
   const [availableFiles, setAvailableFiles] = useState([]);
   const [newPrompt, setNewPrompt] = useState({ active: false, name: '', content: '' });
-  // Whether the user is currently editing the template prompt
-  const [editingTemplatePrompt, setEditingTemplatePrompt] = useState(
-    initial.system_prompt_override != null
-  );
 
   useEffect(() => {
     instructionsApi.list().then(setAvailableFiles).catch(() => {});
@@ -78,19 +74,6 @@ export function useAgentForm(initial = {}) {
     setNewPrompt(p => ({ ...p, [k]: v }));
   }
 
-  function startEditingTemplatePrompt() {
-    // Copy template default into override so user edits from a real starting point
-    if (form.system_prompt_override == null) {
-      set('system_prompt_override', form.template_system_prompt);
-    }
-    setEditingTemplatePrompt(true);
-  }
-
-  function resetTemplatePrompt() {
-    set('system_prompt_override', null);
-    setEditingTemplatePrompt(false);
-  }
-
   async function resolvePromptFile() {
     if (newPrompt.active && newPrompt.name.trim()) {
       const safeName = sanitizeFileName(newPrompt.name);
@@ -106,7 +89,6 @@ export function useAgentForm(initial = {}) {
     form, set, generatedRole,
     availableFiles,
     newPrompt, setNewPromptField,
-    editingTemplatePrompt, startEditingTemplatePrompt, resetTemplatePrompt,
     handleNameChange, toggleInstructionFile, resolvePromptFile,
   };
 }
@@ -165,6 +147,8 @@ export function ColorField({ value, onChange }) {
 
 export function SystemPromptField({ promptFile, onSelectFile, availableFiles, newPrompt, setNewPromptField }) {
   const showCreate = newPrompt.active;
+  const sanitized = sanitizeFileName(newPrompt.name);
+  const fileExists = sanitized && availableFiles.some(f => f.path === `instructions/${sanitized}.md`);
 
   return (
     <div className="space-y-2">
@@ -198,7 +182,12 @@ export function SystemPromptField({ promptFile, onSelectFile, availableFiles, ne
             </div>
             {newPrompt.name && (
               <p className="mt-0.5 text-[10px] font-mono text-gray-600">
-                → instructions/{sanitizeFileName(newPrompt.name) || '…'}.md
+                → instructions/{sanitized || '…'}.md
+              </p>
+            )}
+            {fileExists && (
+              <p className="mt-1 text-[10px] text-amber-400 flex items-center gap-1">
+                ⚠ A file with this name already exists — saving will overwrite it.
               </p>
             )}
           </div>
@@ -236,70 +225,46 @@ export function SystemPromptField({ promptFile, onSelectFile, availableFiles, ne
   );
 }
 
-export function TemplatePromptField({ form, editingTemplatePrompt, onStartEdit, onReset, onChange }) {
-  if (!form.is_template && !form.created_from_template_id) return null;
+const BEHAVIOUR_PROMPT_TOOLTIP = `Additional personality and context for this agent — plain text, not markdown.
 
-  const isCustomized = form.system_prompt_override != null;
-  const displayValue = isCustomized ? form.system_prompt_override : form.template_system_prompt;
+Example: "You are the Project Manager agent called Alex. You help the client and the team reach the project goal. You have an extroverted personality with an interest for shoes and like comedy shows. You are also very analytical and empathic."`;
+
+export function TemplatePromptField({ form, onChange }) {
+  const [showTooltip, setShowTooltip] = useState(false);
+  const charCount = (form.template_system_prompt || '').length;
 
   return (
     <div className="space-y-2">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <label className="text-xs font-medium text-gray-400">Template Behaviour Prompt</label>
-          <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-accent/15 text-accent border border-accent/25 uppercase tracking-wide">
-            Template
-          </span>
+      <div className="flex items-center gap-1.5">
+        <label className="text-xs font-medium text-gray-400">Behaviour Prompt</label>
+        <span className="text-[10px] text-gray-600">· plain text, not markdown</span>
+        <div className="relative ml-auto">
+          <button
+            type="button"
+            onMouseEnter={() => setShowTooltip(true)}
+            onMouseLeave={() => setShowTooltip(false)}
+            className="text-gray-600 hover:text-gray-400 transition-colors"
+          >
+            <Info size={11} />
+          </button>
+          {showTooltip && (
+            <div className="absolute right-0 bottom-full mb-2 z-30 w-72 bg-surface-1 border border-border rounded-xl px-3 py-2.5 text-[10px] text-gray-400 leading-relaxed shadow-xl whitespace-pre-wrap">
+              {BEHAVIOUR_PROMPT_TOOLTIP}
+            </div>
+          )}
         </div>
-        {isCustomized ? (
-          <button
-            type="button"
-            onClick={onReset}
-            className="text-[10px] flex items-center gap-1 text-amber-400 hover:text-amber-300 transition-colors"
-          >
-            <RotateCcw size={10} />
-            Reset to default
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={onStartEdit}
-            className="text-[10px] flex items-center gap-1 text-gray-600 hover:text-gray-400 transition-colors"
-          >
-            <Unlock size={10} />
-            Customize
-          </button>
-        )}
       </div>
-
-      {/* Description */}
-      <p className="text-[10px] text-gray-600">
-        {isCustomized
-          ? 'You have customized this template prompt. It overrides the default for this agent only.'
-          : 'Behavioural framework injected from the template. Combined with the system prompt file when calling the AI.'}
+      <textarea
+        value={form.template_system_prompt || ''}
+        onChange={e => onChange(e.target.value.slice(0, 1000))}
+        maxLength={1000}
+        rows={4}
+        placeholder="Optional additional personality or context injected before the system prompt file…"
+        className="w-full bg-surface-3 border border-border rounded-lg px-3 py-2 text-xs text-gray-200 placeholder-gray-600 focus:outline-none focus:border-accent transition-colors resize-y"
+      />
+      <p className={`text-right text-[10px] ${charCount > 900 ? 'text-amber-400' : 'text-gray-600'}`}>
+        {charCount} / 1000
       </p>
-
-      {/* Prompt textarea */}
-      <div className={`relative rounded-xl border ${isCustomized ? 'border-amber-500/30' : 'border-border'}`}>
-        {!isCustomized && (
-          <div className="absolute top-2 right-2 flex items-center gap-1 text-[9px] text-gray-600">
-            <Lock size={9} />
-            default
-          </div>
-        )}
-        <textarea
-          value={displayValue || ''}
-          onChange={e => isCustomized && onChange(e.target.value)}
-          readOnly={!isCustomized}
-          rows={10}
-          className={`w-full rounded-xl px-3 py-2.5 text-[11px] font-mono leading-relaxed focus:outline-none transition-colors resize-y ${
-            isCustomized
-              ? 'bg-surface-3 text-gray-200 focus:border-amber-500/50'
-              : 'bg-surface-1 text-gray-500 cursor-default select-none'
-          }`}
-        />
-      </div>
     </div>
   );
 }

@@ -4,6 +4,7 @@ import { tasksApi, columnsApi, agentsApi, secretsApi, agentTemplatesApi, instruc
 export const useStore = create((set, get) => ({
   columns: [],
   tasks: [],
+  archivedTasks: [],
   agents: [],
   secrets: [],
   agentTemplates: [],
@@ -16,18 +17,21 @@ export const useStore = create((set, get) => ({
   editingAgent: null,
   currentPage: 'board', // 'board' | 'settings'
   theme: localStorage.getItem('theme') || 'dark',
+  isDraggingAgent: false,
+  setDraggingAgent: (v) => set({ isDraggingAgent: v }),
 
   // Load everything
   async load() {
     set({ loading: true });
     try {
-      const [columns, tasks, agents, agentTemplates] = await Promise.all([
+      const [columns, tasks, archivedTasks, agents, agentTemplates] = await Promise.all([
         columnsApi.list(true), // include archived so they can be restored
         tasksApi.list(),
+        tasksApi.list({ include_archived: true }).then(all => all.filter(t => t.archived_at)),
         agentsApi.list(),
         agentTemplatesApi.list(true),
       ]);
-      set({ columns, tasks, agents, agentTemplates, loading: false });
+      set({ columns, tasks, archivedTasks, agents, agentTemplates, loading: false });
     } catch (e) {
       console.error('Load failed:', e);
       set({ loading: false });
@@ -60,7 +64,20 @@ export const useStore = create((set, get) => ({
 
   async archiveTask(id) {
     await tasksApi.archive(id);
-    set(s => ({ tasks: s.tasks.filter(t => t.id !== id), selectedTask: s.selectedTask?.id === id ? null : s.selectedTask }));
+    set(s => ({
+      tasks: s.tasks.filter(t => t.id !== id),
+      archivedTasks: [...s.archivedTasks, { ...s.tasks.find(t => t.id === id), archived_at: new Date().toISOString() }].filter(Boolean),
+      selectedTask: s.selectedTask?.id === id ? null : s.selectedTask,
+    }));
+  },
+
+  async unarchiveTask(id) {
+    const updated = await tasksApi.unarchive(id);
+    set(s => ({
+      archivedTasks: s.archivedTasks.filter(t => t.id !== id),
+      tasks: [updated, ...s.tasks],
+    }));
+    return updated;
   },
 
   async bypassPm(id) {
@@ -169,8 +186,15 @@ export const useStore = create((set, get) => ({
   },
 
   async saveAgentAsTemplate(agentId, data) {
-    const tpl = await agentTemplatesApi.saveAgentAs(agentId, data);
-    set(s => ({ agentTemplates: [tpl, ...s.agentTemplates] }));
+    const res = await agentTemplatesApi.saveAgentAs(agentId, data);
+    const tpl = res.template ?? res;
+    const updatedAgent = res.agent;
+    set(s => ({
+      agentTemplates: [tpl, ...s.agentTemplates],
+      agents: updatedAgent
+        ? s.agents.map(a => a.id === updatedAgent.id ? updatedAgent : a)
+        : s.agents,
+    }));
     return tpl;
   },
 

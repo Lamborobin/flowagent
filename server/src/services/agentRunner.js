@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 const { v4: uuidv4 } = require('uuid');
-const { exec } = require('child_process');
+const { exec, execSync } = require('child_process');
 const util = require('util');
 const { getDb } = require('../db');
 
@@ -86,6 +86,39 @@ async function mergeGithubPr(prNumber) {
     body: { merge_method: 'merge' },
   });
   return json && (json.merged === true || json.sha);
+}
+
+// ---------------------------------------------------------------------------
+// Git worktree helpers — one isolated directory per developer agent task
+// ---------------------------------------------------------------------------
+
+function createWorktree(taskId) {
+  const worktreePath = path.resolve(PROJECT_ROOT, '..', `flowagent-wt-${taskId}`);
+  const branch = `feature/${taskId}`;
+
+  if (fs.existsSync(worktreePath)) {
+    console.log(`[AgentRunner] Worktree already exists: ${worktreePath}`);
+    return worktreePath;
+  }
+
+  try {
+    execSync(`git worktree add "${worktreePath}" -b ${branch}`, { cwd: PROJECT_ROOT, stdio: 'pipe' });
+  } catch {
+    // Branch may already exist from a previous run — add without -b
+    execSync(`git worktree add "${worktreePath}" ${branch}`, { cwd: PROJECT_ROOT, stdio: 'pipe' });
+  }
+
+  console.log(`[AgentRunner] Created worktree: ${worktreePath} (${branch})`);
+  return worktreePath;
+}
+
+function removeWorktree(worktreePath) {
+  try {
+    execSync(`git worktree remove --force "${worktreePath}"`, { cwd: PROJECT_ROOT, stdio: 'pipe' });
+    console.log(`[AgentRunner] Removed worktree: ${worktreePath}`);
+  } catch (err) {
+    console.error(`[AgentRunner] Failed to remove worktree ${worktreePath}:`, err.message);
+  }
 }
 
 // Global codebase files — loaded for technical agents (dev, tester) but NOT for PM.
@@ -439,7 +472,7 @@ const BASH_FORBIDDEN = [
   { pattern: /git\s+push\s+.*\b(master|main)\b/, reason: 'Pushing directly to master/main is not allowed.' },
 ];
 
-async function runBash(command) {
+async function runBash(command, cwd = PROJECT_ROOT) {
   for (const { pattern, reason } of BASH_FORBIDDEN) {
     if (pattern.test(command)) {
       return { success: false, output: `BLOCKED: ${reason}` };
@@ -447,7 +480,7 @@ async function runBash(command) {
   }
   try {
     const { stdout, stderr } = await execAsync(command, {
-      cwd: PROJECT_ROOT,
+      cwd,
       timeout: 60000,
       maxBuffer: 2 * 1024 * 1024
     });
@@ -457,9 +490,11 @@ async function runBash(command) {
   }
 }
 
-function devWriteFile(relPath, content) {
-  const absPath = path.join(PROJECT_ROOT, relPath);
-  if (!absPath.startsWith(CLIENT_DIR + path.sep) && absPath !== CLIENT_DIR) {
+function devWriteFile(relPath, content, worktreeDir) {
+  const baseDir = worktreeDir || PROJECT_ROOT;
+  const clientDir = path.join(baseDir, 'client');
+  const absPath = path.join(baseDir, relPath);
+  if (!absPath.startsWith(clientDir + path.sep) && absPath !== clientDir) {
     return { error: `Write denied: path must be inside client/. Got: ${relPath}` };
   }
   try {
@@ -468,6 +503,14 @@ function devWriteFile(relPath, content) {
     return { success: true };
   } catch (err) {
     return { error: err.message };
+  }
+}
+
+function readFileFromDir(relPath, baseDir) {
+  try {
+    return fs.readFileSync(path.join(baseDir, relPath), 'utf8');
+  } catch {
+    return '';
   }
 }
 
@@ -480,6 +523,17 @@ async function runDevAgent(taskId) {
 
   const devAgent = db.prepare("SELECT * FROM agents WHERE id = 'agent_dev'").get();
   if (!devAgent) return;
+
+  // Create an isolated git worktree for this task so the main checkout is never touched
+  let worktreePath;
+  try {
+    worktreePath = createWorktree(task.id);
+  } catch (err) {
+    console.error(`[AgentRunner] Failed to create worktree for task ${taskId}:`, err.message);
+    db.prepare(`INSERT INTO task_logs (id, task_id, agent_id, action, message) VALUES (?, ?, ?, ?, ?)`)
+      .run(uuidv4(), taskId, 'agent_dev', 'note', `Worktree setup failed: ${err.message}`);
+    return;
+  }
 
   const systemPrompt = buildSystemPrompt(devAgent);
   const contextBlock = buildContextBlock(devAgent);
@@ -495,14 +549,14 @@ async function runDevAgent(taskId) {
     `Priority: ${task.priority} | Complexity: ${task.complexity}`,
     ``,
     `## Instructions`,
-    `Work through this git workflow exactly — do not deviate:`,
-    `1. git checkout -b feature/${task.id}  (or git checkout feature/${task.id} if it already exists)`,
-    `2. Implement changes inside client/ only`,
-    `3. git add -A && git commit -m "[${task.id}] ${task.title}"`,
-    `4. git push -u origin feature/${task.id}`,
-    `5. Call task_complete with a brief summary`,
+    `You are working in an isolated git worktree already checked out on branch feature/${task.id}. Do NOT run git checkout or git worktree — you are already on the correct branch.`,
+    `Work through this git workflow exactly:`,
+    `1. Implement changes inside client/ only`,
+    `2. git add -A && git commit -m "[${task.id}] ${task.title}"`,
+    `3. git push -u origin feature/${task.id}`,
+    `4. Call task_complete with a brief summary`,
     `IMPORTANT: Do NOT merge branches. Do NOT push to master. Do NOT run gh commands. The server handles PR creation automatically when you call task_complete.`,
-    `Use task_log at each milestone (25%, 50%, 75%). If you hit a blocker, call request_human.`
+    `Use task_log at each milestone (25%, 50%, 75%). If you hit a blocker you cannot resolve, push whatever you have first (git add -A && git commit -m "[${task.id}] WIP" && git push -u origin feature/${task.id}), then call request_human.`
   ].filter(Boolean).join('\n');
 
   const messages = [{ role: 'user', content: initialPrompt }];
@@ -524,6 +578,7 @@ async function runDevAgent(taskId) {
       console.error(`[AgentRunner] Dev agent API error for task ${taskId}:`, err.message);
       db.prepare(`INSERT INTO task_logs (id, task_id, agent_id, action, message) VALUES (?, ?, ?, ?, ?)`)
         .run(uuidv4(), taskId, 'agent_dev', 'note', `Dev agent error: ${err.message}`);
+      removeWorktree(worktreePath);
       break;
     }
 
@@ -540,14 +595,14 @@ async function runDevAgent(taskId) {
 
       if (block.name === 'bash') {
         console.log(`[AgentRunner][dev][${taskId}] bash: ${block.input.command}`);
-        result = await runBash(block.input.command);
+        result = await runBash(block.input.command, worktreePath);
 
       } else if (block.name === 'read_file') {
-        const content = readFile(block.input.path);
+        const content = readFileFromDir(block.input.path, worktreePath);
         result = content ? { success: true, content } : { error: 'File not found' };
 
       } else if (block.name === 'write_file') {
-        result = devWriteFile(block.input.path, block.input.content);
+        result = devWriteFile(block.input.path, block.input.content, worktreePath);
 
       } else if (block.name === 'task_log') {
         const { progress, message } = block.input;
@@ -592,6 +647,7 @@ async function runDevAgent(taskId) {
           console.log(`[AgentRunner][dev][${taskId}] awaiting review. PR: ${pr_url || 'creation failed'}`);
         }
         completed = true;
+        removeWorktree(worktreePath);
         result = { success: true, pr_url };
 
       } else if (block.name === 'request_human') {
@@ -601,6 +657,7 @@ async function runDevAgent(taskId) {
           .run(uuidv4(), taskId, 'agent_dev', 'human_action_requested', reason);
         console.log(`[AgentRunner][dev][${taskId}] requested human: ${reason}`);
         completed = true; // stop the loop; human must resume
+        removeWorktree(worktreePath);
         result = { success: true };
       }
 

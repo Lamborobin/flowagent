@@ -1,4 +1,5 @@
 import { useSortable } from '@dnd-kit/sortable';
+import { useDroppable } from '@dnd-kit/core';
 import { CSS } from '@dnd-kit/utilities';
 import { AlertTriangle, Clock, Lock } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
@@ -12,12 +13,18 @@ const PRIORITY_STYLES = {
 };
 
 export default function TaskCard({ task }) {
-  const { agents, setSelectedTask } = useStore();
+  const { agents, setSelectedTask, isDraggingAgent } = useStore();
   const isLocked = task.is_locked;
 
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+  const { attributes, listeners, setNodeRef: setSortableRef, transform, transition, isDragging } = useSortable({
     id: task.id,
     disabled: isLocked,
+  });
+
+  // Separate drop zone for agent assignment — always enabled so dnd-kit registers it
+  // before the drag activates (disabled prop causes deregistration which misses the drop)
+  const { setNodeRef: setDropRef, isOver } = useDroppable({
+    id: `agent-drop:${task.id}`,
   });
 
   const style = {
@@ -31,7 +38,7 @@ export default function TaskCard({ task }) {
 
   return (
     <div
-      ref={setNodeRef}
+      ref={node => { setSortableRef(node); setDropRef(node); }}
       style={style}
       {...attributes}
       {...(isLocked ? {} : listeners)}
@@ -39,9 +46,22 @@ export default function TaskCard({ task }) {
       className={`group relative bg-surface-2 border rounded-xl p-3.5 transition-all duration-150 animate-slide-in select-none
         ${isLocked
           ? 'border-amber-500/25 cursor-pointer'
-          : 'border-border cursor-grab hover:border-accent/40 hover:bg-surface-3'
+          : isDraggingAgent && isOver
+            ? 'border-accent/60 bg-accent/5 cursor-copy'
+            : isDraggingAgent
+              ? 'border-border/60 cursor-copy'
+              : 'border-border cursor-grab hover:border-accent/40 hover:bg-surface-3'
         }`}
     >
+      {/* Agent drop hint overlay */}
+      {isDraggingAgent && isOver && (
+        <div className="absolute inset-0 rounded-xl border-2 border-accent/40 border-dashed pointer-events-none z-10 flex items-center justify-center">
+          <span className="text-[10px] font-medium text-accent bg-surface-2/90 px-2 py-1 rounded-lg">
+            Drop to assign
+          </span>
+        </div>
+      )}
+
       {/* Lock banner */}
       {isLocked && (
         <div className="flex items-center gap-1.5 mb-2.5 px-2 py-1 bg-amber-500/10 border border-amber-500/20 rounded-lg">

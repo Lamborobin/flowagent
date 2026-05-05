@@ -246,8 +246,10 @@ function initDb() {
     console.log('✅ Migrated: added system_prompt_override column to agents');
   }
 
-  // Migration: mark PM as template and always sync template_system_prompt to current default
-  db.prepare(`UPDATE agents SET is_template = 1, template_system_prompt = ? WHERE id = 'agent_pm'`)
+  // Migration: mark PM as template on first run only (template_system_prompt is now editable via UI)
+  db.prepare(`UPDATE agents SET is_template = 1 WHERE id = 'agent_pm' AND is_template = 0`).run();
+  // Seed PM template_system_prompt only if it has never been set
+  db.prepare(`UPDATE agents SET template_system_prompt = ? WHERE id = 'agent_pm' AND template_system_prompt IS NULL`)
     .run(PM_TEMPLATE_SYSTEM_PROMPT);
 
   // Migration: add created_from_template_id to agents if missing

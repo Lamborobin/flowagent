@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { X, Save, Trash2, Archive, LayoutTemplate, Check } from 'lucide-react';
 import { useStore } from '../store';
 import {
@@ -16,7 +16,6 @@ export default function EditAgentModal() {
     form, set,
     availableFiles,
     newPrompt, setNewPromptField,
-    editingTemplatePrompt, startEditingTemplatePrompt, resetTemplatePrompt,
     toggleInstructionFile, resolvePromptFile,
   } = useAgentForm({
     name: agent.name,
@@ -36,6 +35,14 @@ export default function EditAgentModal() {
   const [confirming, setConfirming] = useState(false);
   const [confirmingArchive, setConfirmingArchive] = useState(false);
   const [error, setError] = useState('');
+
+  // Dismiss confirmation chips on any keypress
+  useEffect(() => {
+    if (!confirming && !confirmingArchive) return;
+    function dismiss() { setConfirming(false); setConfirmingArchive(false); }
+    document.addEventListener('keydown', dismiss);
+    return () => document.removeEventListener('keydown', dismiss);
+  }, [confirming, confirmingArchive]);
   const [savingAsTemplate, setSavingAsTemplate] = useState(false);
   const [templateName, setTemplateName] = useState(agent.name);
   const [templateSaved, setTemplateSaved] = useState(false);
@@ -63,11 +70,8 @@ export default function EditAgentModal() {
         prompt_file: promptFilePath,
         instruction_files: form.instruction_files,
         color: form.color,
+        template_system_prompt: form.template_system_prompt || null,
       };
-      // Always send system_prompt_override for template agents so reset (null) is honoured
-      if (form.is_template) {
-        payload.system_prompt_override = form.system_prompt_override;
-      }
       await updateAgent(agent.id, payload);
       close();
     } catch (err) {
@@ -172,10 +176,7 @@ export default function EditAgentModal() {
 
           <TemplatePromptField
             form={form}
-            editingTemplatePrompt={editingTemplatePrompt}
-            onStartEdit={startEditingTemplatePrompt}
-            onReset={resetTemplatePrompt}
-            onChange={v => set('system_prompt_override', v)}
+            onChange={v => set('template_system_prompt', v)}
           />
 
           <SystemPromptField
@@ -242,30 +243,46 @@ export default function EditAgentModal() {
           )}
 
           <div className="flex gap-2 pt-2 flex-wrap">
-            <button
-              type="button"
-              onClick={handleArchiveAgent}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs transition-colors ${
-                confirmingArchive
-                  ? 'bg-amber-500/20 border border-amber-500/40 text-amber-400'
-                  : 'btn-ghost text-gray-600 hover:text-amber-400'
-              }`}
-            >
-              <Archive size={13} />
-              {confirmingArchive ? 'Confirm archive?' : 'Archive'}
-            </button>
-            <button
-              type="button"
-              onClick={handleDelete}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs transition-colors ${
-                confirming
-                  ? 'bg-red-500/20 border border-red-500/40 text-red-400'
-                  : 'btn-ghost text-gray-600 hover:text-red-400'
-              }`}
-            >
-              <Trash2 size={13} />
-              {confirming ? 'Confirm delete?' : 'Delete'}
-            </button>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={handleArchiveAgent}
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs transition-colors ${
+                  confirmingArchive
+                    ? 'bg-amber-500/20 border border-amber-500/40 text-amber-400'
+                    : 'btn-ghost text-gray-600 hover:text-amber-400'
+                }`}
+              >
+                <Archive size={13} />
+                Archive
+              </button>
+              {confirmingArchive && (
+                <div className="absolute bottom-full left-0 mb-1 z-20 bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[10px] rounded-lg px-2.5 py-1.5 whitespace-nowrap flex items-center gap-2 shadow-lg">
+                  <span>Are you sure you want to archive this agent?</span>
+                  <button type="button" onClick={e => { e.stopPropagation(); setConfirmingArchive(false); }} className="text-amber-400 hover:text-amber-200 leading-none">✕</button>
+                </div>
+              )}
+            </div>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={handleDelete}
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs transition-colors ${
+                  confirming
+                    ? 'bg-red-500/20 border border-red-500/40 text-red-400'
+                    : 'btn-ghost text-gray-600 hover:text-red-400'
+                }`}
+              >
+                <Trash2 size={13} />
+                Delete
+              </button>
+              {confirming && (
+                <div className="absolute bottom-full left-0 mb-1 z-20 bg-red-500/20 border border-red-500/40 text-red-300 text-[10px] rounded-lg px-2.5 py-1.5 whitespace-nowrap flex items-center gap-2 shadow-lg">
+                  <span>Are you sure you want to delete this agent?</span>
+                  <button type="button" onClick={e => { e.stopPropagation(); setConfirming(false); }} className="text-red-400 hover:text-red-200 leading-none">✕</button>
+                </div>
+              )}
+            </div>
             <button type="button" onClick={close} className="btn-ghost flex-1 justify-center py-2">
               Cancel
             </button>

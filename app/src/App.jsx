@@ -16,8 +16,9 @@ import SettingsPage from './components/SettingsPage';
 const PRESET_COLORS = ['#6366f1','#3b82f6','#8b5cf6','#f59e0b','#10b981','#ef4444','#ec4899','#14b8a6','#f97316','#64748b'];
 
 export default function App() {
-  const { columns, tasks, loading, load, moveTask, selectedTask, showNewTask, showNewAgent, showTemplates, editingAgent, unarchiveColumn, deleteColumn, createColumn, updateColumn, reorderColumnsLocally, currentPage, theme } = useStore();
+  const { columns, tasks, agents, loading, load, moveTask, updateTask, selectedTask, showNewTask, showNewAgent, showTemplates, editingAgent, unarchiveColumn, deleteColumn, createColumn, updateColumn, reorderColumnsLocally, currentPage, theme, setDraggingAgent } = useStore();
   const [dragging, setDragging] = useState(null);
+  const [dragError, setDragError] = useState('');
   const [showArchivedCols, setShowArchivedCols] = useState(false);
   const [addingColumn, setAddingColumn] = useState(false);
   const [newColName, setNewColName] = useState('');
@@ -45,7 +46,23 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
+  // Column-agent assignment restrictions (mirrors API enforcement)
+  const COLUMN_ALLOWED = {
+    col_backlog: ['agent_pm', 'human'],
+    col_inprogress: ['agent_dev', 'human'],
+    col_testing: ['agent_test', 'human'],
+    col_humanaction: ['human'],
+    col_humanreview: ['human'],
+    col_done: ['human'],
+  };
+
   function handleDragStart({ active }) {
+    const agent = agents.find(a => a.id === active.id);
+    if (agent) {
+      setDragging({ type: 'agent', agent });
+      setDraggingAgent(true);
+      return;
+    }
     const col = activeColumns.find(c => c.id === active.id);
     if (col) {
       setDragging({ type: 'column', col });
@@ -82,8 +99,35 @@ export default function App() {
   }
 
   async function handleDragEnd({ active, over }) {
+    const prevDragging = dragging;
     setDragging(null);
-    if (!over || active.id === over.id) return;
+    setDraggingAgent(false);
+
+    if (!over) return;
+
+    // Agent drag → assign to task
+    if (prevDragging?.type === 'agent') {
+      // over.id may be 'agent-drop:taskId' or just 'taskId' (from sortable droppable)
+      const rawId = over.id.startsWith('agent-drop:') ? over.id.slice(11) : over.id;
+      const task = tasks.find(t => t.id === rawId);
+      if (!task) return;
+      const agent = prevDragging.agent;
+      const allowed = COLUMN_ALLOWED[task.column_id];
+      if (allowed && !allowed.includes(agent.id)) {
+        setDragError(`${agent.name} is not allowed in this column.`);
+        setTimeout(() => setDragError(''), 3500);
+        return;
+      }
+      try {
+        await updateTask(task.id, { assigned_agent_id: agent.id });
+      } catch {
+        setDragError('Failed to assign agent.');
+        setTimeout(() => setDragError(''), 3500);
+      }
+      return;
+    }
+
+    if (active.id === over.id) return;
 
     // Column reorder
     const isDraggingColumn = activeColumns.some(c => c.id === active.id);
@@ -134,6 +178,8 @@ export default function App() {
   }
 
   return (
+    <DndContext sensors={sensors} collisionDetection={closestCenter}
+      onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
     <div className="flex h-screen overflow-hidden bg-surface-0 font-sans">
       <Sidebar />
 
@@ -145,8 +191,7 @@ export default function App() {
           </div>
         )}
         {/* Board */}
-        <DndContext sensors={sensors} collisionDetection={closestCenter}
-          onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+        <div>
           <div className="flex-1 overflow-x-auto overflow-y-hidden">
             <div className="flex flex-col h-full">
               <div className="flex gap-4 flex-1 overflow-y-hidden p-5 min-w-max">
@@ -251,15 +296,23 @@ export default function App() {
             {dragging?.type === 'column' && (
               <div className="flex items-center gap-2 px-3 py-2 bg-surface-2 border border-border rounded-xl shadow-2xl opacity-90 w-72">
                 <GripVertical size={13} className="text-gray-500" />
-                <div className="w-2 h-2 rounded-full shrink-0" style={{ background: dragging.col.color }} />
                 <span className="text-sm font-semibold text-gray-200">{dragging.col.name}</span>
                 <span className="text-xs font-mono text-gray-600 bg-surface-3 px-1.5 py-0.5 rounded-md ml-auto">
                   {tasks.filter(t => t.column_id === dragging.col.id).length}
                 </span>
               </div>
             )}
+            {dragging?.type === 'agent' && (
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-surface-2 border border-accent/40 rounded-xl shadow-2xl opacity-90">
+                <div className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[9px] font-bold shrink-0"
+                     style={{ background: dragging.agent.color }}>
+                  {dragging.agent.name[0]}
+                </div>
+                <span className="text-xs font-medium text-gray-200">{dragging.agent.name}</span>
+              </div>
+            )}
           </DragOverlay>
-        </DndContext>
+        </div>
       </div>
 
       {/* Task detail panel */}
@@ -270,6 +323,14 @@ export default function App() {
       {showNewAgent && <NewAgentModal />}
       {editingAgent && <EditAgentModal />}
       {showTemplates && <TemplatesModal />}
+
+      {/* Agent drop error toast */}
+      {dragError && (
+        <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 bg-surface-2 border border-red-500/30 text-red-300 text-xs rounded-xl px-4 py-2.5 shadow-xl">
+          {dragError}
+        </div>
+      )}
     </div>
+    </DndContext>
   );
 }

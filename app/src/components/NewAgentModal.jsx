@@ -16,7 +16,6 @@ export default function NewAgentModal() {
     form, set, generatedRole,
     availableFiles,
     newPrompt, setNewPromptField,
-    editingTemplatePrompt, startEditingTemplatePrompt, resetTemplatePrompt,
     handleNameChange, toggleInstructionFile, resolvePromptFile,
   } = useAgentForm();
 
@@ -81,6 +80,7 @@ export default function NewAgentModal() {
         color: form.color,
         permissions: ['task:read'],
         created_from_template_id: selectedTemplateId || undefined,
+        template_system_prompt: form.template_system_prompt || null,
       });
       setShowNewAgent(false);
     } catch (err) {
@@ -151,10 +151,7 @@ export default function NewAgentModal() {
 
           <TemplatePromptField
             form={form}
-            editingTemplatePrompt={editingTemplatePrompt}
-            onStartEdit={startEditingTemplatePrompt}
-            onReset={resetTemplatePrompt}
-            onChange={v => set('system_prompt_override', v)}
+            onChange={v => set('template_system_prompt', v)}
           />
 
           <SystemPromptField

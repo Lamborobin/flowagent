@@ -216,6 +216,14 @@ function TemplateCard({ tpl, availableFiles, onEdit, onArchive, onUnarchive, onD
   const isArchived = !!tpl.archived_at;
   const [confirmDelete, setConfirmDelete] = useState(false);
 
+  // Dismiss confirmation chip on any keypress
+  useEffect(() => {
+    if (!confirmDelete) return;
+    function dismiss() { setConfirmDelete(false); }
+    document.addEventListener('keydown', dismiss);
+    return () => document.removeEventListener('keydown', dismiss);
+  }, [confirmDelete]);
+
   async function handleDelete() {
     if (!confirmDelete) { setConfirmDelete(true); return; }
     setConfirmDelete(false);
@@ -250,10 +258,18 @@ function TemplateCard({ tpl, availableFiles, onEdit, onArchive, onUnarchive, onD
                 className="p-1.5 rounded-lg text-gray-600 hover:text-accent hover:bg-surface-1 transition-colors">
                 <RotateCcw size={12} />
               </button>
-              <button onClick={handleDelete} title={confirmDelete ? 'Confirm delete?' : 'Delete permanently'}
-                className={`p-1.5 rounded-lg transition-colors ${confirmDelete ? 'text-red-400 bg-red-500/10' : 'text-gray-600 hover:text-red-400 hover:bg-surface-1'}`}>
-                <Trash2 size={12} />
-              </button>
+              <div className="relative">
+                <button onClick={handleDelete} title="Delete permanently"
+                  className={`p-1.5 rounded-lg transition-colors ${confirmDelete ? 'text-red-400 bg-red-500/10' : 'text-gray-600 hover:text-red-400 hover:bg-surface-1'}`}>
+                  <Trash2 size={12} />
+                </button>
+                {confirmDelete && (
+                  <div className="absolute top-full right-0 mt-1 z-20 bg-red-500/20 border border-red-500/40 text-red-300 text-[10px] rounded-lg px-2.5 py-1.5 whitespace-nowrap flex items-center gap-2 shadow-lg">
+                    <span>Are you sure you want to delete this template?</span>
+                    <button onClick={e => { e.stopPropagation(); setConfirmDelete(false); }} className="text-red-400 hover:text-red-200 leading-none">✕</button>
+                  </div>
+                )}
+              </div>
             </>
           ) : (
             <>
@@ -265,10 +281,18 @@ function TemplateCard({ tpl, availableFiles, onEdit, onArchive, onUnarchive, onD
                 className="p-1.5 rounded-lg text-gray-600 hover:text-amber-400 hover:bg-surface-1 transition-colors">
                 <Archive size={12} />
               </button>
-              <button onClick={handleDelete} title={confirmDelete ? 'Confirm delete?' : 'Delete permanently'}
-                className={`p-1.5 rounded-lg transition-colors ${confirmDelete ? 'text-red-400 bg-red-500/10' : 'text-gray-600 hover:text-red-400 hover:bg-surface-1'}`}>
-                <Trash2 size={12} />
-              </button>
+              <div className="relative">
+                <button onClick={handleDelete} title="Delete permanently"
+                  className={`p-1.5 rounded-lg transition-colors ${confirmDelete ? 'text-red-400 bg-red-500/10' : 'text-gray-600 hover:text-red-400 hover:bg-surface-1'}`}>
+                  <Trash2 size={12} />
+                </button>
+                {confirmDelete && (
+                  <div className="absolute top-full right-0 mt-1 z-20 bg-red-500/20 border border-red-500/40 text-red-300 text-[10px] rounded-lg px-2.5 py-1.5 whitespace-nowrap flex items-center gap-2 shadow-lg">
+                    <span>Are you sure you want to delete this template?</span>
+                    <button onClick={e => { e.stopPropagation(); setConfirmDelete(false); }} className="text-red-400 hover:text-red-200 leading-none">✕</button>
+                  </div>
+                )}
+              </div>
             </>
           )}
         </div>

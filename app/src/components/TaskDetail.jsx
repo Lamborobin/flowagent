@@ -71,6 +71,14 @@ export default function TaskDetail() {
   useEffect(() => { if (editingTitle && titleRef.current) titleRef.current.focus(); }, [editingTitle]);
   useEffect(() => { if (editingDescription && descRef.current) descRef.current.focus(); }, [editingDescription]);
 
+  // Dismiss confirmation chips on any keypress
+  useEffect(() => {
+    if (!confirmDelete && !confirmArchive) return;
+    function dismiss() { setConfirmDelete(false); setConfirmArchive(false); }
+    document.addEventListener('keydown', dismiss);
+    return () => document.removeEventListener('keydown', dismiss);
+  }, [confirmDelete, confirmArchive]);
+
   // Poll while agent is thinking — stop when PM posts a question or approves
   useEffect(() => {
     if (!agentThinking || !selectedTask) return;
@@ -294,20 +302,36 @@ export default function TaskDetail() {
             )}
           </div>
           <div className="flex items-center gap-1 shrink-0">
-            <button
-              onClick={handleArchive}
-              title={confirmArchive ? 'Click again to confirm' : 'Archive task'}
-              className={`p-1.5 rounded-lg transition-colors ${confirmArchive ? 'bg-amber-500/20 text-amber-300' : 'btn-ghost text-gray-600 hover:text-amber-400'}`}
-            >
-              <Archive size={13} />
-            </button>
-            <button
-              onClick={handleDelete}
-              title={confirmDelete ? 'Click again to confirm delete' : 'Delete task'}
-              className={`p-1.5 rounded-lg transition-colors ${confirmDelete ? 'bg-red-500/20 text-red-300' : 'btn-ghost text-red-400 hover:text-red-300 hover:bg-red-500/10'}`}
-            >
-              <Trash2 size={13} />
-            </button>
+            <div className="relative">
+              <button
+                onClick={handleArchive}
+                title="Archive task"
+                className={`p-1.5 rounded-lg transition-colors ${confirmArchive ? 'bg-amber-500/20 text-amber-300' : 'btn-ghost text-gray-600 hover:text-amber-400'}`}
+              >
+                <Archive size={13} />
+              </button>
+              {confirmArchive && (
+                <div className="absolute top-full right-0 mt-1 z-20 bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[10px] rounded-lg px-2.5 py-1.5 whitespace-nowrap flex items-center gap-2 shadow-lg">
+                  <span>Are you sure you want to archive this task?</span>
+                  <button onClick={e => { e.stopPropagation(); setConfirmArchive(false); }} className="text-amber-400 hover:text-amber-200 leading-none">✕</button>
+                </div>
+              )}
+            </div>
+            <div className="relative">
+              <button
+                onClick={handleDelete}
+                title="Delete task"
+                className={`p-1.5 rounded-lg transition-colors ${confirmDelete ? 'bg-red-500/20 text-red-300' : 'btn-ghost text-red-400 hover:text-red-300 hover:bg-red-500/10'}`}
+              >
+                <Trash2 size={13} />
+              </button>
+              {confirmDelete && (
+                <div className="absolute top-full right-0 mt-1 z-20 bg-red-500/20 border border-red-500/40 text-red-300 text-[10px] rounded-lg px-2.5 py-1.5 whitespace-nowrap flex items-center gap-2 shadow-lg">
+                  <span>Are you sure you want to delete this task?</span>
+                  <button onClick={e => { e.stopPropagation(); setConfirmDelete(false); }} className="text-red-400 hover:text-red-200 leading-none">✕</button>
+                </div>
+              )}
+            </div>
             <button onClick={() => setSelectedTask(null)} className="btn-ghost p-1.5 rounded-lg ml-1">
               <X size={14} />
             </button>
@@ -402,8 +426,9 @@ export default function TaskDetail() {
                     )}
                     {/* Conversation history */}
                     {rawConversationLogs.length > 0 && (
-                      <div className="px-4 py-3 space-y-2">
+                      <div className="px-4 py-3">
                         <p className="text-[10px] text-gray-600 font-medium uppercase tracking-wide mb-2">Planning conversation</p>
+                        <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
                         {rawConversationLogs.map(log => {
                           const isPM = log.action === 'pm_question';
                           const isDone = log.action === 'pm_reviewed';
@@ -425,6 +450,7 @@ export default function TaskDetail() {
                             </div>
                           );
                         })}
+                        </div>
                       </div>
                     )}
                   </div>
@@ -669,6 +695,27 @@ export default function TaskDetail() {
               )}
             </div>
 
+            {/* Progress */}
+            {task.progress > 0 && (
+              <div className="bg-surface-2 rounded-lg p-2.5">
+                <div className="flex justify-between items-center mb-2">
+                  <p className="text-xs text-gray-600 font-medium">Progress</p>
+                  <span className="text-xs font-mono text-gray-400">{task.progress}%</span>
+                </div>
+                <div className="h-1.5 bg-surface-4 rounded-full overflow-hidden">
+                  <div
+                    className="h-full rounded-full transition-all duration-500"
+                    style={{
+                      width: `${task.progress}%`,
+                      background: task.progress === 100
+                        ? 'linear-gradient(90deg, #10b981, #34d399)'
+                        : 'linear-gradient(90deg, #7c6af7, #a78bfa)'
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+
             {/* Acceptance criteria — editable */}
             <div>
               <div className="flex items-center justify-between mb-1.5">
@@ -714,53 +761,77 @@ export default function TaskDetail() {
               )}
             </div>
 
-            {/* Priority & Complexity — always editable dropdowns */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="bg-surface-2 rounded-lg p-2.5">
-                <p className="text-xs text-gray-600 mb-1.5">Priority</p>
-                <select
-                  value={task.priority}
-                  onChange={e => handlePriorityChange(e.target.value)}
-                  className="w-full bg-transparent text-xs font-medium focus:outline-none cursor-pointer"
-                  style={{ color: PRIORITY_COLORS[task.priority] }}
-                >
-                  {PRIORITIES.map(p => (
-                    <option key={p} value={p} style={{ color: PRIORITY_COLORS[p], background: '#1a1a2e' }}>{p}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="bg-surface-2 rounded-lg p-2.5">
-                <p className="text-xs text-gray-600 mb-1.5">Complexity</p>
-                <select
-                  value={task.complexity}
-                  onChange={e => handleComplexityChange(e.target.value)}
-                  className="w-full bg-transparent text-xs font-medium text-gray-300 focus:outline-none cursor-pointer"
-                >
-                  {COMPLEXITIES.map(c => (
-                    <option key={c} value={c} style={{ background: '#1a1a2e' }}>{c}</option>
-                  ))}
-                </select>
-              </div>
+            {/* Priority */}
+            <div className="bg-surface-2 rounded-lg p-2.5">
+              <p className="text-xs text-gray-600 mb-1.5">Priority</p>
+              <select
+                value={task.priority}
+                onChange={e => handlePriorityChange(e.target.value)}
+                className="w-full bg-transparent text-xs font-medium focus:outline-none cursor-pointer"
+                style={{ color: PRIORITY_COLORS[task.priority] }}
+              >
+                {PRIORITIES.map(p => (
+                  <option key={p} value={p} style={{ color: PRIORITY_COLORS[p], background: '#1a1a2e' }}>{p}</option>
+                ))}
+              </select>
             </div>
 
-            {/* Auto-complete toggle */}
-            <div
-              className="flex items-center justify-between bg-surface-2 rounded-lg px-3 py-2.5 cursor-pointer hover:bg-surface-3/60 transition-colors"
-              onClick={() => {
-                const next = task.auto_complete ? 0 : 1;
-                updateTask(task.id, { auto_complete: next });
-                setTask(t => ({ ...t, auto_complete: next }));
-              }}
-            >
-              <div>
-                <p className="text-xs font-medium text-gray-300">Auto-complete</p>
-                <p className="text-[10px] text-gray-600 mt-0.5">
-                  {task.auto_complete ? 'PR will be merged automatically → Testing' : 'PR sent to Human Action for your review'}
-                </p>
+            {/* Team section — controls visible/restricted for client role */}
+            <div className="border border-border rounded-xl overflow-hidden">
+              <div className="px-3 py-1.5 bg-surface-3/50 border-b border-border">
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-600">Team</p>
               </div>
-              <div className={`w-8 h-4.5 rounded-full transition-colors relative shrink-0 ml-3 ${task.auto_complete ? 'bg-accent' : 'bg-surface-4'}`}
-                   style={{ height: '18px', width: '32px' }}>
-                <div className={`absolute top-0.5 w-3.5 h-3.5 rounded-full bg-white shadow transition-transform ${task.auto_complete ? 'translate-x-[14px]' : 'translate-x-0.5'}`} />
+              <div className="p-3 space-y-3">
+                {/* TODO: complexity is visible to client but read-only when client login is implemented */}
+                <div className="bg-surface-2 rounded-lg p-2.5">
+                  <p className="text-xs text-gray-600 mb-1.5">Complexity</p>
+                  <select
+                    value={task.complexity}
+                    onChange={e => handleComplexityChange(e.target.value)}
+                    className="w-full bg-transparent text-xs font-medium text-gray-300 focus:outline-none cursor-pointer"
+                  >
+                    {COMPLEXITIES.map(c => (
+                      <option key={c} value={c} style={{ background: '#1a1a2e' }}>{c}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* TODO: hide auto_complete toggle for client role when login is implemented */}
+                <div
+                  className="flex items-center justify-between bg-surface-2 rounded-lg px-3 py-2.5 cursor-pointer hover:bg-surface-3/60 transition-colors"
+                  onClick={() => {
+                    const next = task.auto_complete ? 0 : 1;
+                    updateTask(task.id, { auto_complete: next });
+                    setTask(t => ({ ...t, auto_complete: next }));
+                  }}
+                >
+                  <div>
+                    <p className="text-xs font-medium text-gray-300">Auto-complete</p>
+                    <p className="text-[10px] text-gray-600 mt-0.5">
+                      {task.auto_complete ? 'PR will be merged automatically → Testing' : 'PR sent to Human Action for your review'}
+                    </p>
+                  </div>
+                  <div className={`w-8 h-4.5 rounded-full transition-colors relative shrink-0 ml-3 ${task.auto_complete ? 'bg-accent' : 'bg-surface-4'}`}
+                       style={{ height: '18px', width: '32px' }}>
+                    <div className={`absolute top-0.5 w-3.5 h-3.5 rounded-full bg-white shadow transition-transform ${task.auto_complete ? 'translate-x-[14px]' : 'translate-x-0.5'}`} />
+                  </div>
+                </div>
+
+                {/* TODO: hide Move To buttons for client role when login is implemented */}
+                {!isLocked && (
+                  <div>
+                    <p className="text-xs text-gray-600 mb-2 flex items-center gap-1"><ArrowRight size={10} />Move to</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {columns.filter(c => c.id !== task.column_id && !c.archived_at).map(col => (
+                        <button key={col.id} onClick={() => handleMove(col.id)}
+                          className="tag bg-surface-3 text-gray-400 hover:text-white hover:bg-surface-4 cursor-pointer transition-colors"
+                          style={{ borderLeft: `2px solid ${col.color}` }}>
+                          {col.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -792,26 +863,17 @@ export default function TaskDetail() {
               </div>
             )}
 
-            {/* Move to — hidden when locked */}
-            {!isLocked && (
-              <div>
-                <p className="text-xs text-gray-600 mb-2 flex items-center gap-1"><ArrowRight size={10} />Move to</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {columns.filter(c => c.id !== task.column_id && !c.archived_at).map(col => (
-                    <button key={col.id} onClick={() => handleMove(col.id)}
-                      className="tag bg-surface-3 text-gray-400 hover:text-white hover:bg-surface-4 cursor-pointer transition-colors"
-                      style={{ borderLeft: `2px solid ${col.color}` }}>
-                      {col.name}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Timestamp */}
-            <div className="text-xs text-gray-700 flex items-center gap-1">
-              <Clock size={10} />
-              Created {formatDistanceToNow(new Date(task.created_at.replace(' ', 'T') + 'Z'), { addSuffix: true })}
+            {/* Timestamps */}
+            <div className="flex items-center gap-3 text-xs text-gray-700">
+              <span className="flex items-center gap-1">
+                <Clock size={10} />
+                Created {formatDistanceToNow(new Date(task.created_at.replace(' ', 'T') + 'Z'), { addSuffix: true })}
+              </span>
+              {task.updated_at && task.updated_at !== task.created_at && (
+                <span className="flex items-center gap-1 text-gray-600">
+                  · Modified {formatDistanceToNow(new Date(task.updated_at.replace(' ', 'T') + 'Z'), { addSuffix: true })}
+                </span>
+              )}
             </div>
           </div>
 
@@ -819,7 +881,7 @@ export default function TaskDetail() {
           {logs.length > 0 && (
             <div className="border-t border-border p-5">
               <p className="text-xs text-gray-600 mb-3 flex items-center gap-1"><Activity size={10} />Activity</p>
-              <div className="space-y-2.5">
+              <div className="max-h-64 overflow-y-auto pr-1 space-y-2.5">
                 {logs.map(log => {
                   const label = (() => {
                     switch (log.action) {

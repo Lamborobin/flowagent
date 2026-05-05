@@ -41,6 +41,14 @@ export default function Column({ column, tasks }) {
     if (renaming) renameRef.current?.select();
   }, [renaming]);
 
+  // Dismiss confirmation chips on any keypress
+  useEffect(() => {
+    if (!confirmDelete && !confirmArchive) return;
+    function dismiss() { setConfirmDelete(false); setConfirmArchive(false); }
+    document.addEventListener('keydown', dismiss);
+    return () => document.removeEventListener('keydown', dismiss);
+  }, [confirmDelete, confirmArchive]);
+
   async function handleArchive() {
     if (!confirmArchive) { setConfirmArchive(true); setConfirmDelete(false); return; }
     setShowMenu(false);
@@ -100,9 +108,13 @@ export default function Column({ column, tasks }) {
   };
 
   return (
-    <div ref={setSortableRef} style={colStyle} className="flex flex-col w-72 shrink-0">
+    <div
+      ref={setSortableRef}
+      style={{ ...colStyle, borderTop: `3px solid ${column.color}` }}
+      className="flex flex-col w-72 shrink-0 bg-surface-2/30 rounded-t-lg"
+    >
       {/* Column header */}
-      <div className="flex items-center justify-between px-1 mb-3">
+      <div className="flex items-center justify-between px-1 mb-3 pt-2">
         {isProtected ? (
           <span className="w-4 shrink-0" />
         ) : (
@@ -118,7 +130,6 @@ export default function Column({ column, tasks }) {
         )}
 
         <div className="flex items-center gap-2 min-w-0 flex-1 ml-1">
-          <div className="w-2 h-2 rounded-full shrink-0" style={{ background: column.color }} />
           {renaming ? (
             <input
               ref={renameRef}
@@ -194,8 +205,14 @@ export default function Column({ column, tasks }) {
                     }`}
                   >
                     <Archive size={11} />
-                    {confirmArchive ? 'Confirm archive?' : 'Archive'}
+                    Archive
                   </button>
+                  {confirmArchive && (
+                    <div className="mx-2 mb-1 px-2 py-1.5 text-[10px] bg-amber-500/15 border border-amber-500/30 text-amber-300 rounded-lg flex items-center justify-between gap-2">
+                      <span>Are you sure you want to archive this column?</span>
+                      <button onClick={e => { e.stopPropagation(); setConfirmArchive(false); }} className="text-amber-400 hover:text-amber-200 leading-none">✕</button>
+                    </div>
+                  )}
                   <button
                     onClick={handleDelete}
                     className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs transition-colors ${
@@ -205,8 +222,14 @@ export default function Column({ column, tasks }) {
                     }`}
                   >
                     <Trash2 size={11} />
-                    {confirmDelete ? 'Confirm delete?' : 'Delete'}
+                    Delete
                   </button>
+                  {confirmDelete && (
+                    <div className="mx-2 mb-1 px-2 py-1.5 text-[10px] bg-red-500/15 border border-red-500/30 text-red-300 rounded-lg flex items-center justify-between gap-2">
+                      <span>Are you sure you want to delete this column?</span>
+                      <button onClick={e => { e.stopPropagation(); setConfirmDelete(false); }} className="text-red-400 hover:text-red-200 leading-none">✕</button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

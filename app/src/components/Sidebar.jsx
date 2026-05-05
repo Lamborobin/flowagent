@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
-import { Bot, Plus, Settings, ChevronDown, ChevronRight, AlertCircle, FileText, X, Cpu, Pencil, LayoutTemplate, AlignStartHorizontal, Home } from 'lucide-react';
+import { Bot, Plus, Settings, ChevronDown, ChevronRight, AlertCircle, FileText, X, Cpu, Pencil, LayoutTemplate, AlignStartHorizontal, Home, Archive } from 'lucide-react';
+import ArchivedTasksModal from './ArchivedTasksModal';
+import { useDraggable } from '@dnd-kit/core';
 import { useStore } from '../store';
 
 function AgentPanel({ agent, onClose, onEdit }) {
@@ -87,16 +89,56 @@ function AgentPanel({ agent, onClose, onEdit }) {
   );
 }
 
+function DraggableAgentRow({ agent, isSelected, showTemplateBadge, templateArchived, originTemplate, onToggle }) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: agent.id });
+  return (
+    <div ref={setNodeRef} style={{ opacity: isDragging ? 0.4 : 1 }}>
+      <button
+        {...attributes}
+        {...listeners}
+        onClick={() => onToggle(agent.id)}
+        className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg transition-colors text-left ${
+          isSelected ? 'bg-surface-3' : 'hover:bg-surface-3'
+        }`}
+        title="Click to expand · Drag to assign to a task"
+      >
+        <div className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[9px] font-bold shrink-0"
+          style={{ background: agent.color }}>
+          {agent.name[0]}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5">
+            <p className="text-xs font-medium text-gray-300 truncate">{agent.name}</p>
+            {showTemplateBadge && (
+              <span
+                title={originTemplate ? `From template: ${originTemplate.name}${templateArchived ? ' (archived)' : ''}` : 'Template agent'}
+                className={`shrink-0 text-[8px] font-medium px-1 py-px rounded uppercase tracking-wide leading-none ${
+                  templateArchived
+                    ? 'bg-amber-500/15 text-amber-400 border border-amber-500/20'
+                    : 'bg-accent/15 text-accent border border-accent/20'
+                }`}>
+                T
+              </span>
+            )}
+          </div>
+          <p className="text-[10px] text-gray-600 truncate">{agent.role}</p>
+        </div>
+      </button>
+    </div>
+  );
+}
+
 const NAV_ITEMS = [
   { label: 'Board', icon: Home, page: 'board' },
   { label: 'Settings', icon: Settings, page: 'settings' },
 ];
 
 export default function Sidebar() {
-  const { agents, tasks, agentTemplates, setShowNewAgent, setShowNewTask, setShowTemplates, setEditingAgent, currentPage, setCurrentPage } = useStore();
+  const { agents, tasks, archivedTasks, agentTemplates, setShowNewAgent, setShowNewTask, setShowTemplates, setEditingAgent, currentPage, setCurrentPage } = useStore();
   const [agentsOpen, setAgentsOpen] = useState(true);
   const [selectedAgentId, setSelectedAgentId] = useState(null);
   const [navOpen, setNavOpen] = useState(false);
+  const [showArchivedModal, setShowArchivedModal] = useState(false);
   const navRef = useRef(null);
 
   const humanActionCount = tasks.filter(t => t.column_id === 'col_humanaction').length;
@@ -161,6 +203,17 @@ export default function Sidebar() {
             New Task
           </button>
 
+          {archivedTasks.length > 0 && (
+            <button
+              onClick={() => setShowArchivedModal(true)}
+              className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-gray-600 hover:text-gray-400 hover:bg-surface-3 text-xs transition-colors"
+            >
+              <Archive size={12} />
+              Archived tasks
+              <span className="ml-auto font-mono text-[10px]">{archivedTasks.length}</span>
+            </button>
+          )}
+
           {humanActionCount > 0 && (
             <button className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-amber-400 hover:bg-surface-3 text-sm transition-colors">
               <AlertCircle size={14} />
@@ -196,34 +249,14 @@ export default function Sidebar() {
                 const showTemplateBadge = agent.is_template || !!agent.created_from_template_id;
                 return (
                   <div key={agent.id}>
-                    <button
-                      onClick={() => toggleAgent(agent.id)}
-                      className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg transition-colors text-left ${
-                        isSelected ? 'bg-surface-3' : 'hover:bg-surface-3'
-                      }`}
-                    >
-                      <div className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[9px] font-bold shrink-0"
-                        style={{ background: agent.color }}>
-                        {agent.name[0]}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <p className="text-xs font-medium text-gray-300 truncate">{agent.name}</p>
-                          {showTemplateBadge && (
-                            <span
-                              title={originTemplate ? `From template: ${originTemplate.name}${templateArchived ? ' (archived)' : ''}` : 'Template agent'}
-                              className={`shrink-0 text-[8px] font-medium px-1 py-px rounded uppercase tracking-wide leading-none ${
-                                templateArchived
-                                  ? 'bg-amber-500/15 text-amber-400 border border-amber-500/20'
-                                  : 'bg-accent/15 text-accent border border-accent/20'
-                              }`}>
-                              T
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-[10px] text-gray-600 truncate">{agent.role}</p>
-                      </div>
-                    </button>
+                    <DraggableAgentRow
+                      agent={agent}
+                      isSelected={isSelected}
+                      showTemplateBadge={showTemplateBadge}
+                      templateArchived={templateArchived}
+                      originTemplate={originTemplate}
+                      onToggle={toggleAgent}
+                    />
 
                     {isSelected && (
                       <AgentPanel
@@ -274,6 +307,8 @@ export default function Sidebar() {
           </button>
         </div>
       </aside>
+
+      {showArchivedModal && <ArchivedTasksModal onClose={() => setShowArchivedModal(false)} />}
     </>
   );
 }

@@ -516,6 +516,21 @@ router.post('/:id/archive', attachAgent, (req, res) => {
   res.json({ ok: true });
 });
 
+// POST /tasks/:id/unarchive — restore an archived task (human only)
+router.post('/:id/unarchive', attachAgent, (req, res) => {
+  if (req.agent?.id !== 'human') return res.status(403).json({ error: 'Only humans can unarchive tasks' });
+  const db = getDb();
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+
+  db.prepare('UPDATE tasks SET archived_at = NULL WHERE id = ?').run(task.id);
+  db.prepare(`INSERT INTO task_logs (id, task_id, agent_id, action, message) VALUES (?, ?, ?, ?, ?)`)
+    .run(uuidv4(), task.id, null, 'updated', 'Task restored from archive by human');
+
+  const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id);
+  res.json({ ...updated, tags: JSON.parse(updated.tags || '[]'), metadata: JSON.parse(updated.metadata || '{}'), is_locked: isTaskLocked(updated) });
+});
+
 // POST /tasks/:id/bypass_pm — human overrides PM lock and unlocks the task
 router.post('/:id/bypass_pm', attachAgent, (req, res) => {
   if (req.agent?.id !== 'human') return res.status(403).json({ error: 'Only humans can bypass PM checks' });

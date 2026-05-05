@@ -49,7 +49,7 @@ agentsRouter.post('/', (req, res) => {
   const {
     name, role, model = 'claude-sonnet-4-5', description,
     permissions = [], prompt_file, instruction_files = [], color = '#6366f1',
-    created_from_template_id,
+    created_from_template_id, template_system_prompt: bodyTemplatePrompt,
   } = req.body;
   if (!name || !role) return res.status(400).json({ error: 'name and role are required' });
 
@@ -58,14 +58,14 @@ agentsRouter.post('/', (req, res) => {
 
   const id = 'agent_' + role.replace(/[^a-z0-9]/gi, '_').toLowerCase();
 
-  // If created from a template that has a template_system_prompt, propagate it
+  // is_template = 1 only when the source template has a behaviour prompt (not just because the user typed one manually)
   let is_template_flag = 0;
-  let template_system_prompt_val = null;
+  let template_system_prompt_val = bodyTemplatePrompt || null;
   if (created_from_template_id) {
     const tpl = db.prepare('SELECT * FROM agent_templates WHERE id = ?').get(created_from_template_id);
     if (tpl?.template_system_prompt) {
       is_template_flag = 1;
-      template_system_prompt_val = tpl.template_system_prompt;
+      if (!template_system_prompt_val) template_system_prompt_val = tpl.template_system_prompt;
     }
   }
 
@@ -97,8 +97,12 @@ agentsRouter.post('/:id/save-as-template', (req, res) => {
     system_prompt_content, agent.template_system_prompt || null,
     agent.instruction_files, agent.permissions, agent.id);
 
+  // Mark the source agent as is_template so it shows the T badge immediately
+  db.prepare(`UPDATE agents SET is_template = 1 WHERE id = ?`).run(req.params.id);
+
   const tpl = db.prepare('SELECT * FROM agent_templates WHERE id = ?').get(id);
-  res.status(201).json(parseTemplate(tpl));
+  const updatedAgent = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
+  res.status(201).json({ template: parseTemplate(tpl), agent: parseAgent(updatedAgent) });
 });
 
 agentsRouter.patch('/:id', (req, res) => {
@@ -109,7 +113,7 @@ agentsRouter.patch('/:id', (req, res) => {
   const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
   if (!agent) return res.status(404).json({ error: 'Agent not found' });
 
-  const { name, model, description, permissions, color, active, prompt_file, instruction_files, system_prompt_override } = req.body;
+  const { name, model, description, permissions, color, active, prompt_file, instruction_files, template_system_prompt } = req.body;
   const allowed = {};
   if (name !== undefined) allowed.name = name;
   if (model !== undefined) allowed.model = model;
@@ -119,9 +123,8 @@ agentsRouter.patch('/:id', (req, res) => {
   if (active !== undefined) allowed.active = active ? 1 : 0;
   if (prompt_file !== undefined) allowed.prompt_file = prompt_file;
   if (instruction_files !== undefined) allowed.instruction_files = JSON.stringify(instruction_files);
-  // null explicitly clears the override (reset to template default)
-  if (Object.prototype.hasOwnProperty.call(req.body, 'system_prompt_override')) {
-    allowed.system_prompt_override = system_prompt_override ?? null;
+  if (Object.prototype.hasOwnProperty.call(req.body, 'template_system_prompt')) {
+    allowed.template_system_prompt = template_system_prompt ?? null;
   }
 
   if (Object.keys(allowed).length === 0) return res.status(400).json({ error: 'Nothing to update' });
