@@ -36,10 +36,10 @@ function isTaskLocked(task) {
     !(task.pm_approval_status === 'approved' && task.human_approval_status === 'approved');
 }
 
-// GET /tasks — list all tasks (optionally filter by column), excludes archived
+// GET /tasks — list all tasks (optionally filter by column/project), excludes archived
 router.get('/', attachAgent, (req, res) => {
   const db = getDb();
-  const { column_id, assigned_agent_id, include_archived } = req.query;
+  const { column_id, assigned_agent_id, include_archived, project_id } = req.query;
 
   let query = 'SELECT * FROM tasks WHERE 1=1';
   const params = [];
@@ -47,6 +47,7 @@ router.get('/', attachAgent, (req, res) => {
   if (!include_archived) { query += ' AND archived_at IS NULL'; }
   if (column_id) { query += ' AND column_id = ?'; params.push(column_id); }
   if (assigned_agent_id) { query += ' AND assigned_agent_id = ?'; params.push(assigned_agent_id); }
+  if (project_id) { query += ' AND project_id = ?'; params.push(project_id); }
 
   query += ' ORDER BY created_at DESC';
   const tasks = db.prepare(query).all(...params);
@@ -90,7 +91,7 @@ router.post('/', requirePermission('task:create'), (req, res) => {
   const {
     title, description, acceptance_criteria, column_id = 'col_backlog',
     assigned_agent_id, priority = 'medium', complexity = 'medium',
-    auto_complete = 0,
+    auto_complete = 0, project_id,
     tags = [], metadata = {}
   } = req.body;
 
@@ -99,6 +100,9 @@ router.post('/', requirePermission('task:create'), (req, res) => {
   // Verify column exists
   const col = db.prepare('SELECT id FROM columns WHERE id = ?').get(column_id);
   if (!col) return res.status(400).json({ error: 'Invalid column_id' });
+
+  // Resolve project: use provided or fall back to default
+  const resolvedProject = project_id || 'proj_velour';
 
   const id = 'task_' + uuidv4().replace(/-/g, '').slice(0, 12);
 
@@ -109,10 +113,10 @@ router.post('/', requirePermission('task:create'), (req, res) => {
   }
 
   db.prepare(`
-    INSERT INTO tasks (id, title, description, acceptance_criteria, column_id, assigned_agent_id, priority, complexity, auto_complete, tags, metadata, pm_approval_status)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO tasks (id, title, description, acceptance_criteria, column_id, assigned_agent_id, priority, complexity, auto_complete, tags, metadata, pm_approval_status, project_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(id, title, description, acceptance_criteria || null, column_id, assigned_agent_id || null, priority, complexity,
-    auto_complete ? 1 : 0, JSON.stringify(tags), JSON.stringify(metadata), pmReviewStatus);
+    auto_complete ? 1 : 0, JSON.stringify(tags), JSON.stringify(metadata), pmReviewStatus, resolvedProject);
 
   // Log it
   const agentId = req.agent && db.prepare('SELECT id FROM agents WHERE id = ?').get(req.agent.id) ? req.agent.id : null;

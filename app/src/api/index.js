@@ -2,8 +2,33 @@ import axios from 'axios';
 
 const api = axios.create({ baseURL: '/api' });
 
-// Always send as human from the UI
-api.defaults.headers.common['X-Agent-Id'] = 'human';
+// Attach JWT token if present; fall back to X-Agent-Id for AI agent calls
+api.interceptors.request.use(config => {
+  const token = localStorage.getItem('fa_token');
+  if (token) {
+    config.headers['Authorization'] = `Bearer ${token}`;
+  } else {
+    // Legacy: keep X-Agent-Id for dev/agent runner compat
+    config.headers['X-Agent-Id'] = 'human';
+  }
+  return config;
+});
+
+export const authApi = {
+  google: (credential) => api.post('/auth/google', { credential }).then(r => r.data),
+  me: () => api.get('/auth/me').then(r => r.data),
+  updateProfile: (data) => api.patch('/auth/profile', data).then(r => r.data),
+};
+
+export const projectsApi = {
+  list: (includeArchived = false) => api.get('/projects', { params: { include_archived: includeArchived } }).then(r => r.data),
+  get: (id) => api.get(`/projects/${id}`).then(r => r.data),
+  create: (data) => api.post('/projects', data).then(r => r.data),
+  update: (id, data) => api.patch(`/projects/${id}`, data).then(r => r.data),
+  archive: (id) => api.post(`/projects/${id}/archive`).then(r => r.data),
+  unarchive: (id) => api.post(`/projects/${id}/unarchive`).then(r => r.data),
+  delete: (id) => api.delete(`/projects/${id}`).then(r => r.data),
+};
 
 export const tasksApi = {
   list: (params) => api.get('/tasks', { params }).then(r => r.data),

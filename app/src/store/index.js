@@ -1,7 +1,109 @@
 import { create } from 'zustand';
-import { tasksApi, columnsApi, agentsApi, secretsApi, agentTemplatesApi, instructionsApi, rolesApi } from '../api';
+import { tasksApi, columnsApi, agentsApi, secretsApi, agentTemplatesApi, instructionsApi, rolesApi, authApi, projectsApi } from '../api';
 
 export const useStore = create((set, get) => ({
+  // ── Auth ─────────────────────────────────────────────────────
+  user: null,
+  authLoading: true,
+  authError: null,
+
+  async initAuth() {
+    const token = localStorage.getItem('fa_token');
+    if (!token) {
+      set({ authLoading: false });
+      return;
+    }
+    try {
+      const { user } = await authApi.me();
+      set({ user, authLoading: false });
+      // Load projects immediately after auth
+      await get().loadProjects();
+    } catch {
+      localStorage.removeItem('fa_token');
+      set({ user: null, authLoading: false });
+    }
+  },
+
+  async googleLogin(credential) {
+    set({ authError: null });
+    try {
+      const { token, user } = await authApi.google(credential);
+      localStorage.setItem('fa_token', token);
+      set({ user });
+      await get().loadProjects();
+    } catch (e) {
+      set({ authError: e.response?.data?.error || 'Sign-in failed. Please try again.' });
+    }
+  },
+
+  logout() {
+    localStorage.removeItem('fa_token');
+    localStorage.removeItem('fa_project');
+    set({ user: null, projects: [], currentProjectId: null, tasks: [], columns: [], agents: [] });
+  },
+
+  async updateProfile(data) {
+    const { user } = await authApi.updateProfile(data);
+    set({ user });
+    return user;
+  },
+
+  setAuthError: (err) => set({ authError: err }),
+
+  // ── Projects ─────────────────────────────────────────────────
+  projects: [],
+  currentProjectId: localStorage.getItem('fa_project') || 'proj_velour',
+
+  async loadProjects() {
+    const projects = await projectsApi.list();
+    set({ projects });
+    // Ensure current project is valid
+    const { currentProjectId } = get();
+    if (!projects.find(p => p.id === currentProjectId)) {
+      const fallback = projects[0]?.id || 'proj_velour';
+      get().setCurrentProject(fallback);
+    }
+  },
+
+  setCurrentProject(id) {
+    localStorage.setItem('fa_project', id);
+    set({ currentProjectId: id });
+    // Re-load board data for the new project
+    get().load();
+  },
+
+  async createProject(data) {
+    const project = await projectsApi.create(data);
+    set(s => ({ projects: [...s.projects, project] }));
+    return project;
+  },
+
+  async updateProject(id, data) {
+    const updated = await projectsApi.update(id, data);
+    set(s => ({ projects: s.projects.map(p => p.id === id ? updated : p) }));
+    return updated;
+  },
+
+  async archiveProject(id) {
+    await projectsApi.archive(id);
+    set(s => ({ projects: s.projects.map(p => p.id === id ? { ...p, archived_at: new Date().toISOString() } : p) }));
+    // Switch to another project if current one was archived
+    if (get().currentProjectId === id) {
+      const next = get().projects.find(p => !p.archived_at && p.id !== id);
+      if (next) get().setCurrentProject(next.id);
+    }
+  },
+
+  async deleteProject(id) {
+    await projectsApi.delete(id);
+    set(s => ({ projects: s.projects.filter(p => p.id !== id) }));
+    if (get().currentProjectId === id) {
+      const next = get().projects.find(p => p.id !== id);
+      if (next) get().setCurrentProject(next.id);
+    }
+  },
+
+  // ── Board data ───────────────────────────────────────────────
   columns: [],
   tasks: [],
   archivedTasks: [],
@@ -16,19 +118,21 @@ export const useStore = create((set, get) => ({
   showNewAgent: false,
   showTemplates: false,
   editingAgent: null,
-  currentPage: 'board', // 'board' | 'settings'
+  currentPage: 'board',
   theme: localStorage.getItem('theme') || 'dark',
   isDraggingAgent: false,
   setDraggingAgent: (v) => set({ isDraggingAgent: v }),
 
-  // Load everything
+  // Load everything for the current project
   async load() {
+    const { currentProjectId } = get();
     set({ loading: true });
     try {
+      const params = currentProjectId ? { project_id: currentProjectId } : {};
       const [columns, tasks, archivedTasks, agents, agentTemplates, roles] = await Promise.all([
-        columnsApi.list(true), // include archived so they can be restored
-        tasksApi.list(),
-        tasksApi.list({ include_archived: true }).then(all => all.filter(t => t.archived_at)),
+        columnsApi.list(true),
+        tasksApi.list(params),
+        tasksApi.list({ ...params, include_archived: true }).then(all => all.filter(t => t.archived_at)),
         agentsApi.list(),
         agentTemplatesApi.list(true),
         rolesApi.list(),
@@ -42,7 +146,8 @@ export const useStore = create((set, get) => ({
 
   // Tasks
   async createTask(data) {
-    const task = await tasksApi.create(data);
+    const { currentProjectId } = get();
+    const task = await tasksApi.create({ ...data, project_id: currentProjectId });
     set(s => ({ tasks: [task, ...s.tasks] }));
     return task;
   },
@@ -134,7 +239,6 @@ export const useStore = create((set, get) => ({
     return updated;
   },
 
-  // Optimistic local reorder — call this before firing API updates
   reorderColumnsLocally(orderedActiveIds) {
     set(s => {
       const archived = s.columns.filter(c => !!c.archived_at);

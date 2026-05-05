@@ -12,11 +12,35 @@ import NewAgentModal from './components/NewAgentModal';
 import EditAgentModal from './components/EditAgentModal';
 import TemplatesModal from './components/TemplatesModal';
 import SettingsPage from './components/SettingsPage';
+import LoginPage from './components/LoginPage';
 
 const PRESET_COLORS = ['#6366f1','#3b82f6','#8b5cf6','#f59e0b','#10b981','#ef4444','#ec4899','#14b8a6','#f97316','#64748b'];
 
+function LoadingScreen() {
+  return (
+    <div className="min-h-screen bg-surface-0 flex items-center justify-center">
+      <div className="flex flex-col items-center gap-3">
+        <div className="w-10 h-10 rounded-xl bg-accent/10 border border-accent/20 flex items-center justify-center">
+          <span className="text-xl">⚡</span>
+        </div>
+        <div className="flex items-center gap-2 text-gray-600 text-xs">
+          <RefreshCw size={11} className="animate-spin" />
+          Loading…
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
-  const { columns, tasks, agents, roles, loading, load, moveTask, updateTask, selectedTask, showNewTask, showNewAgent, showTemplates, editingAgent, unarchiveColumn, deleteColumn, createColumn, updateColumn, reorderColumnsLocally, currentPage, theme, setDraggingAgent } = useStore();
+  const {
+    columns, tasks, agents, roles, loading, load, moveTask, updateTask,
+    selectedTask, showNewTask, showNewAgent, showTemplates, editingAgent,
+    unarchiveColumn, deleteColumn, createColumn, updateColumn, reorderColumnsLocally,
+    currentPage, theme, setDraggingAgent,
+    user, authLoading, initAuth,
+  } = useStore();
+
   const [dragging, setDragging] = useState(null);
   const [dragError, setDragError] = useState('');
   const [dragSuccess, setDragSuccess] = useState('');
@@ -37,7 +61,13 @@ export default function App() {
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
   );
 
-  useEffect(() => { load(); }, []);
+  // Bootstrap auth on mount
+  useEffect(() => { initAuth(); }, []);
+
+  // Load board data once authenticated
+  useEffect(() => {
+    if (user) { load(); }
+  }, [user]);
 
   // Apply persisted theme on mount
   useEffect(() => {
@@ -46,18 +76,18 @@ export default function App() {
 
   // Poll for updates every 5s (agents may update tasks)
   useEffect(() => {
+    if (!user) return;
     const interval = setInterval(() => load(), 5000);
     return () => clearInterval(interval);
-  }, []);
+  }, [user]);
 
-  // Dynamic column access check — works for system and custom columns
   function canAssignAgent(agent, columnId) {
     if (!agent || agent.id === 'human') return true;
     if (columnId === 'col_unassigned') return true;
     const coveringRoles = roles.filter(r =>
       r.type === 'column_access' && (r.allowed_column_ids || []).includes(columnId)
     );
-    if (coveringRoles.length === 0) return true; // no role restricts this column
+    if (coveringRoles.length === 0) return true;
     const roleIds = agent.role_ids || [];
     if (roleIds.includes('role_access_any')) return true;
     return coveringRoles.some(r => roleIds.includes(r.id));
@@ -112,9 +142,7 @@ export default function App() {
 
     if (!over) return;
 
-    // Agent drag → assign to task
     if (prevDragging?.type === 'agent') {
-      // over.id may be 'agent-drop:taskId' or just 'taskId' (from sortable droppable)
       const rawId = over.id.startsWith('agent-drop:') ? over.id.slice(11) : over.id;
       const task = tasks.find(t => t.id === rawId);
       if (!task) return;
@@ -137,15 +165,12 @@ export default function App() {
 
     if (active.id === over.id) return;
 
-    // Column reorder
     const isDraggingColumn = activeColumns.some(c => c.id === active.id);
     if (isDraggingColumn) {
-      // over.id may be a column id, a zone:colId, or a task id inside a column
       let overColId = over.id;
       if (over.id.startsWith('zone:')) {
         overColId = over.id.slice(5);
       } else if (!activeColumns.some(c => c.id === over.id)) {
-        // it's a task id — resolve to its column
         overColId = tasks.find(t => t.id === over.id)?.column_id ?? over.id;
       }
 
@@ -164,7 +189,6 @@ export default function App() {
       return;
     }
 
-    // Task move — over.id may be a zone:colId, a column id, or another task id
     let targetColumnId;
     if (over.id.startsWith('zone:')) {
       targetColumnId = over.id.slice(5);
@@ -176,7 +200,6 @@ export default function App() {
     if (targetColumnId) {
       const task = tasks.find(t => t.id === active.id);
       if (task?.column_id !== targetColumnId) {
-        // Block move if the task's assigned agent doesn't have access to the target column
         if (task?.assigned_agent_id && task.assigned_agent_id !== 'human') {
           const assignedAgent = agents.find(a => a.id === task.assigned_agent_id);
           if (assignedAgent && !canAssignAgent(assignedAgent, targetColumnId)) {
@@ -189,6 +212,10 @@ export default function App() {
       }
     }
   }
+
+  // ── Auth gate ────────────────────────────────────────────────
+  if (authLoading) return <LoadingScreen />;
+  if (!user) return <LoginPage />;
 
   if (currentPage === 'settings') {
     return <SettingsPage />;
@@ -221,7 +248,7 @@ export default function App() {
                     />
                   ))}
                 </SortableContext>
-                {/* Add Column — outside SortableContext so it's never a drag target */}
+                {/* Add Column */}
                 {addingColumn ? (
                   <div className="flex flex-col w-72 shrink-0">
                     <form onSubmit={submitAddColumn} className="bg-surface-2 border border-border rounded-xl p-3 flex flex-col gap-2.5">
@@ -250,9 +277,7 @@ export default function App() {
                           />
                         ))}
                       </div>
-                      {addColError && (
-                        <p className="text-[10px] text-red-400">{addColError}</p>
-                      )}
+                      {addColError && <p className="text-[10px] text-red-400">{addColError}</p>}
                       <button
                         type="submit"
                         className="w-full py-1.5 text-xs font-medium text-white bg-accent hover:bg-accent/80 rounded-lg transition-colors"
@@ -332,16 +357,13 @@ export default function App() {
         </div>
       </div>
 
-      {/* Task detail panel */}
       {selectedTask && <TaskDetail />}
 
-      {/* Modals */}
       {showNewTask && <NewTaskModal />}
       {showNewAgent && <NewAgentModal />}
       {editingAgent && <EditAgentModal />}
       {showTemplates && <TemplatesModal />}
 
-      {/* Drag toasts */}
       {dragError && (
         <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 bg-surface-2 border border-red-500/30 text-red-300 text-xs rounded-xl px-4 py-2.5 shadow-xl">
           {dragError}

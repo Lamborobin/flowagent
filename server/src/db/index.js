@@ -504,6 +504,63 @@ function initDb() {
   defaultTemplates.forEach(t => { const r = insertTplIfMissing.run(...t); seededCount += r.changes; });
   if (seededCount > 0) console.log(`✅ Seeded ${seededCount} default agent template(s)`);
 
+  // ── Users table ────────────────────────────────────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      google_id TEXT UNIQUE NOT NULL,
+      email TEXT UNIQUE NOT NULL,
+      first_name TEXT,
+      last_name TEXT,
+      picture TEXT,
+      company_name TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  // Migration: add company_name if missing (existing DBs)
+  const userCols = db.prepare('PRAGMA table_info(users)').all().map(c => c.name);
+  if (!userCols.includes('company_name')) {
+    db.exec('ALTER TABLE users ADD COLUMN company_name TEXT');
+    console.log('✅ Migrated: added company_name to users');
+  }
+
+  // ── Projects table ──────────────────────────────────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS projects (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      client_name TEXT,
+      color TEXT DEFAULT '#6366f1',
+      emoji TEXT DEFAULT '📋',
+      owner_id TEXT REFERENCES users(id),
+      archived_at DATETIME,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  // Migration: add project_id to tasks
+  const taskColNames = db.prepare('PRAGMA table_info(tasks)').all().map(c => c.name);
+  if (!taskColNames.includes('project_id')) {
+    db.exec("ALTER TABLE tasks ADD COLUMN project_id TEXT REFERENCES projects(id)");
+    console.log('✅ Migrated: added project_id to tasks');
+  }
+
+  // Seed default "Velour" project (idempotent)
+  const velourExists = db.prepare("SELECT id FROM projects WHERE id = 'proj_velour'").get();
+  if (!velourExists) {
+    db.prepare(`
+      INSERT INTO projects (id, name, description, client_name, color, emoji)
+      VALUES ('proj_velour', 'FlowAgent', 'Internal development of the FlowAgent platform', 'Velour', '#6366f1', '⚡')
+    `).run();
+    // Assign all existing tasks to the Velour project
+    db.prepare("UPDATE tasks SET project_id = 'proj_velour' WHERE project_id IS NULL").run();
+    console.log('✅ Seeded Velour project and migrated existing tasks');
+  }
+
   console.log('✅ Database initialized at', DB_PATH);
   return db;
 }

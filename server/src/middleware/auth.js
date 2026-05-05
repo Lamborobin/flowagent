@@ -1,22 +1,81 @@
+const jwt = require('jsonwebtoken');
 const { getDb } = require('../db');
+
+const JWT_SECRET = process.env.JWT_SECRET || 'flowagent-dev-secret-change-in-production';
+
+/**
+ * Decode a Bearer JWT if present — populates req.user and treats caller as 'human'.
+ * Does NOT block if token is missing; call requireAuth to enforce auth.
+ */
+function attachUser(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  if (authHeader?.startsWith('Bearer ')) {
+    try {
+      const decoded = jwt.verify(authHeader.slice(7), JWT_SECRET);
+      req.user = decoded;
+      req.agent = { id: 'human', role: 'human', permissions: ['*'] };
+    } catch { /* invalid token — ignore, let next layer decide */ }
+  }
+  next();
+}
+
+/**
+ * Requires a valid JWT or a known X-Agent-Id (for AI agents).
+ * Humans must have a valid Bearer token.
+ */
+function requireAuth(req, res, next) {
+  // Already resolved via attachUser
+  if (req.user) return next();
+
+  const authHeader = req.headers['authorization'];
+  if (authHeader?.startsWith('Bearer ')) {
+    try {
+      const decoded = jwt.verify(authHeader.slice(7), JWT_SECRET);
+      req.user = decoded;
+      req.agent = { id: 'human', role: 'human', permissions: ['*'] };
+      return next();
+    } catch {
+      return res.status(401).json({ error: 'Invalid or expired token' });
+    }
+  }
+
+  // AI agents use X-Agent-Id header (not human logins)
+  const agentId = req.headers['x-agent-id'];
+  if (agentId && agentId !== 'human') {
+    const db = getDb();
+    const agent = db.prepare('SELECT * FROM agents WHERE id = ? AND active = 1').get(agentId);
+    if (agent) {
+      req.agent = { ...agent, permissions: JSON.parse(agent.permissions || '[]') };
+      return next();
+    }
+  }
+
+  res.status(401).json({ error: 'Authentication required' });
+}
 
 /**
  * Middleware to verify an agent has a specific permission.
  * Agents identify themselves via X-Agent-Id header.
- * Humans can pass X-Agent-Id: human to bypass permission checks.
+ * Humans (via JWT) get full access.
  */
 function requirePermission(permission) {
   return (req, res, next) => {
+    // JWT human — full access
+    if (req.user) {
+      if (!req.agent) req.agent = { id: 'human', role: 'human', permissions: ['*'] };
+      return next();
+    }
+
     const agentId = req.headers['x-agent-id'];
 
-    // Human override — full access
+    // Legacy X-Agent-Id: human (kept for dev convenience / agent runner)
     if (agentId === 'human') {
       req.agent = { id: 'human', role: 'human', permissions: ['*'] };
       return next();
     }
 
     if (!agentId) {
-      return res.status(401).json({ error: 'Missing X-Agent-Id header' });
+      return res.status(401).json({ error: 'Missing authentication' });
     }
 
     const db = getDb();
@@ -44,9 +103,21 @@ function requirePermission(permission) {
 }
 
 /**
- * Soft auth — attaches agent to req if header present, but doesn't block
+ * Soft auth — attaches user/agent to req if credentials present, but doesn't block
  */
 function attachAgent(req, res, next) {
+  // JWT user takes priority
+  if (req.user) return next();
+
+  const authHeader = req.headers['authorization'];
+  if (authHeader?.startsWith('Bearer ')) {
+    try {
+      req.user = jwt.verify(authHeader.slice(7), JWT_SECRET);
+      req.agent = { id: 'human', role: 'human', permissions: ['*'] };
+      return next();
+    } catch { /* skip */ }
+  }
+
   const agentId = req.headers['x-agent-id'];
   if (!agentId) return next();
 
@@ -63,4 +134,4 @@ function attachAgent(req, res, next) {
   next();
 }
 
-module.exports = { requirePermission, attachAgent };
+module.exports = { requirePermission, requireAuth, attachAgent, attachUser };

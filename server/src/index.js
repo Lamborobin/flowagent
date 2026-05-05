@@ -3,7 +3,10 @@ const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
 const { initDb } = require('./db');
+const { attachUser } = require('./middleware/auth');
 const tasksRouter = require('./routes/tasks');
+const authRouter = require('./routes/auth');
+const projectsRouter = require('./routes/projects');
 const { agentsRouter, columnsRouter, secretsRouter, instructionsRouter, agentTemplatesRouter, rolesRouter } = require('./routes/other');
 
 const app = express();
@@ -14,7 +17,12 @@ app.use(cors({ origin: process.env.FRONTEND_URL || 'http://localhost:5173' }));
 app.use(express.json());
 app.use(morgan('dev'));
 
+// Attach user from JWT on every request (non-blocking)
+app.use(attachUser);
+
 // Routes
+app.use('/api/auth', authRouter);
+app.use('/api/projects', projectsRouter);
 app.use('/api/tasks', tasksRouter);
 app.use('/api/agents', agentsRouter);
 app.use('/api/columns', columnsRouter);
@@ -42,6 +50,6 @@ app.use((err, req, res, next) => {
 // Init DB and start
 initDb();
 app.listen(PORT, () => {
-  console.log(`\n🚀 AutoKan server running at http://localhost:${PORT}`);
+  console.log(`\n🚀 FlowAgent server running at http://localhost:${PORT}`);
   console.log(`   API health: http://localhost:${PORT}/api/health\n`);
 });
