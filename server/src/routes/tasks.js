@@ -253,6 +253,17 @@ router.post('/:id/move', requirePermission('task:move'), (req, res) => {
     });
   }
 
+  // Block move if the task's assigned agent doesn't have column access
+  if (task.assigned_agent_id && task.assigned_agent_id !== 'human') {
+    if (!canAgentBeInColumn(task.assigned_agent_id, column_id, db)) {
+      const agent = db.prepare('SELECT name FROM agents WHERE id = ?').get(task.assigned_agent_id);
+      return res.status(403).json({
+        error: `${agent?.name || task.assigned_agent_id} does not have access to that column. Re-assign the task first or grant the agent column access.`,
+        agent_column_mismatch: true,
+      });
+    }
+  }
+
   const fromColumn = task.column_id;
   db.prepare('UPDATE tasks SET column_id = ? WHERE id = ?').run(column_id, task.id);
 

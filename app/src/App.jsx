@@ -19,6 +19,7 @@ export default function App() {
   const { columns, tasks, agents, loading, load, moveTask, updateTask, selectedTask, showNewTask, showNewAgent, showTemplates, editingAgent, unarchiveColumn, deleteColumn, createColumn, updateColumn, reorderColumnsLocally, currentPage, theme, setDraggingAgent } = useStore();
   const [dragging, setDragging] = useState(null);
   const [dragError, setDragError] = useState('');
+  const [dragSuccess, setDragSuccess] = useState('');
   const [showArchivedCols, setShowArchivedCols] = useState(false);
   const [addingColumn, setAddingColumn] = useState(false);
   const [newColName, setNewColName] = useState('');
@@ -130,6 +131,8 @@ export default function App() {
       }
       try {
         await updateTask(task.id, { assigned_agent_id: agent.id });
+        setDragSuccess(`${agent.name} assigned to "${task.title}"`);
+        setTimeout(() => setDragSuccess(''), 3500);
       } catch {
         setDragError('Failed to assign agent.');
         setTimeout(() => setDragError(''), 3500);
@@ -178,6 +181,15 @@ export default function App() {
     if (targetColumnId) {
       const task = tasks.find(t => t.id === active.id);
       if (task?.column_id !== targetColumnId) {
+        // Block move if the task's assigned agent doesn't have access to the target column
+        if (task?.assigned_agent_id && task.assigned_agent_id !== 'human') {
+          const assignedAgent = agents.find(a => a.id === task.assigned_agent_id);
+          if (assignedAgent && !canAssignAgent(assignedAgent, targetColumnId)) {
+            setDragError(`${assignedAgent.name} doesn't have access to that column — re-assign or update agent roles first.`);
+            setTimeout(() => setDragError(''), 4000);
+            return;
+          }
+        }
         await moveTask(active.id, targetColumnId);
       }
     }
@@ -334,10 +346,15 @@ export default function App() {
       {editingAgent && <EditAgentModal />}
       {showTemplates && <TemplatesModal />}
 
-      {/* Agent drop error toast */}
+      {/* Drag toasts */}
       {dragError && (
         <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 bg-surface-2 border border-red-500/30 text-red-300 text-xs rounded-xl px-4 py-2.5 shadow-xl">
           {dragError}
+        </div>
+      )}
+      {dragSuccess && (
+        <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 bg-surface-2 border border-accent/30 text-accent text-xs rounded-xl px-4 py-2.5 shadow-xl">
+          {dragSuccess}
         </div>
       )}
     </div>
