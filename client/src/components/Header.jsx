@@ -56,6 +56,16 @@ export default function Header({ cartCount = 0, activeCategory, onNavigate }) {
               </div>
             )}
           </div>
+
+          {/* Google link button */}
+          <a
+            href="https://google.com/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-gray-900 hover:opacity-70 transition-opacity font-medium"
+          >
+            Google
+          </a>
         </nav>
         <button className="text-sm relative">
           Bag
@@ -107,6 +117,16 @@ export default function Header({ cartCount = 0, activeCategory, onNavigate }) {
             </div>
           )}
         </div>
+
+        {/* Mobile Google link button */}
+        <a
+          href="https://google.com/"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-gray-900 hover:opacity-70 transition-opacity font-medium"
+        >
+          Google
+        </a>
       </nav>
     </header>
   )
